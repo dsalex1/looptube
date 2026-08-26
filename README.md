@@ -56,11 +56,32 @@ issues the one request that would be slow; it pulls 1 MiB ranges in sequence.
 | Un-ranged `GET` | 11 KB/s | ~110 s |
 | Sequential 1 MiB ranges | ~4 MB/s | 0.3 s |
 
+### The datacenter wall
+
+This is the real limit, and it is not fixable by choosing a better host.
+
+Signed googlevideo URLs for **geo-restricted** videos carry a `gcr` parameter that is
+covered by the signature (`sparams` is four characters longer). Those URLs are only
+honoured from that country by an address Google does not read as a datacenter. The same
+URL loads fine from a home connection and 403s from Cloudflare, deterministically, on
+every edge in the URL's `mn` list — host rotation was tried and every edge refused alike.
+
+A second, softer version of the same wall: some edges serve a datacenter the first
+~448 KB and then cut it off, answering `206` with an **empty body** rather than an error.
+Retrying, backing off and stepping the chunk size down does not move that ceiling. So the
+client checks the decoded length against the length the player reports and rejects a
+short track rather than drawing a waveform that quietly ends early.
+
+Measured over 12 videos: **7 give a real waveform, 5 are geo-restricted.** The
+geo-restricted ones skew towards major-label music, which is unfortunate for a practice
+tool — for those, load the audio from a file and everything works.
+
 ### If the proxy cannot reach a video
 
 Nothing breaks. The video still plays and A–B repeat, markers and tempo all still work —
-the waveform just falls back to a flat bed, and pitch is greyed out because the iframe
-cannot do it. You can also load the audio from a local file in settings.
+the waveform falls back to a flat bed, pitch is greyed out because the iframe cannot do
+it, and the app says which of the two reasons applied. You can load the audio from a
+local file in settings to get the full engine back.
 
 ## Layout
 
@@ -112,5 +133,10 @@ Point the app at your own worker under the gear icon; it defaults to the deploye
 
 - The resolver is a third party. If it goes down, waveforms go with it — the worker keeps
   a list of resolvers so another can be slotted in, and the app degrades rather than fails.
+  Everything else was tried: Invidious and Piped are dead for streams, cobalt needs a
+  captcha-issued token, and the transcoding services that host media themselves answer
+  "Access blocked" to datacenter requests.
+- Very long videos may exceed the Worker subrequest budget, since the audio is pulled in
+  chunks. Songs are fine; a three-hour livestream is not.
 - Only extraction is proxied. Playback stays in YouTube's own embedded player, so views
   and ads are served normally.

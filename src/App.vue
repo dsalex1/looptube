@@ -105,7 +105,7 @@ async function fetchAudio(forId: string, state: LoopState) {
   const token = ++fetchToken
   status.value = 'Fetching audio…'
   try {
-    const result = await fromService(forId)
+    const result = await fromService(forId, yt.duration.value)
     if (token !== fetchToken || id.value !== forId) return
     await activate(result, state)
     status.value = ''
@@ -113,9 +113,21 @@ async function fetchAudio(forId: string, state: LoopState) {
     if (token !== fetchToken) return
     console.warn('Audio service failed:', e)
     // not fatal: the video still plays and the loops still work, there is just no wave
-    status.value = 'No audio samples — video looping still works'
-    setTimeout(() => (status.value === 'No audio samples — video looping still works') && (status.value = ''), 6000)
+    status.value = reasonFor(e)
+    const shown = status.value
+    setTimeout(() => status.value === shown && (status.value = ''), 7000)
   }
+}
+
+/**
+ * Why the waveform is flat, in the user's terms. A geo-restricted video is the one case
+ * no proxy can fix, so it is worth naming rather than blaming the network.
+ */
+function reasonFor(e: unknown) {
+  const message = String((e as Error)?.message ?? e)
+  if (message.includes('451') || /geo/i.test(message)) return 'This video is geo-restricted — load the audio from a file for the waveform'
+  if (/incomplete/i.test(message)) return 'Only part of the audio came through — video looping still works'
+  return 'No audio samples — video looping still works'
 }
 
 /** Hand playback to the Web Audio engine, carrying across whatever is set right now. */

@@ -19,14 +19,16 @@ export const serviceUrl = () => (localStorage.getItem(SERVICE_KEY) ?? DEFAULT_SE
 
 export const setServiceUrl = (url: string) => localStorage.setItem(SERVICE_KEY, url.trim().replace(/\/$/, ''))
 
-/**
- * Real peaks for a video id.
- *
- * YouTube serves media over SABR, so the browser cannot reach the stream itself; the
- * proxy resolves it and relays the bytes with CORS headers. Decoding stays here, where
- * the platform already has a decoder for every container the proxy can hand back.
- */
-async function attempt(base: string, id: string, fmt: string, signal?: AbortSignal): Promise<PeaksResult> {
+/** Anything shorter than this much of the real track is a cut-off download, not a track. */
+const COMPLETE_ENOUGH = 0.95
+
+async function attempt(
+  base: string,
+  id: string,
+  fmt: string,
+  expected: number,
+  signal?: AbortSignal
+): Promise<PeaksResult> {
   const response = await fetch(`${base}/audio?v=${encodeURIComponent(id)}&fmt=${fmt}`, { signal })
   if (!response.ok) {
     const detail = await response.text().catch(() => '')
@@ -39,6 +41,12 @@ async function attempt(base: string, id: string, fmt: string, signal?: AbortSign
   const forPlayback = bytes.slice(0)
   const decoded = await decodeAudio(bytes)
 
+  // Some googlevideo edges serve a datacenter only the first few hundred KB and then cut
+  // us off. That still decodes — into a track that quietly ends early — so it is checked
+  // against the length the player reports rather than trusted.
+  if (expected && decoded.duration < expected * COMPLETE_ENOUGH)
+    throw new Error(`incomplete audio: got ${decoded.duration.toFixed(0)}s of ${expected.toFixed(0)}s`)
+
   const type = response.headers.get('Content-Type') ?? 'audio/mp4'
   const title = decodeURIComponent(response.headers.get('X-Title') ?? '')
   return {
@@ -49,16 +57,23 @@ async function attempt(base: string, id: string, fmt: string, signal?: AbortSign
   }
 }
 
-export async function fromService(id: string, signal?: AbortSignal): Promise<PeaksResult> {
+/**
+ * Real peaks for a video id.
+ *
+ * YouTube serves media over SABR, so the browser cannot reach the stream itself; the
+ * proxy resolves it and relays the bytes with CORS headers. Decoding stays here, where
+ * the platform already has a decoder for every container the proxy can hand back.
+ */
+export async function fromService(id: string, expected = 0, signal?: AbortSignal): Promise<PeaksResult> {
   const base = serviceUrl()
   if (!base) throw new Error('No audio service configured')
   try {
     // opus is a third of the size, and every current browser decodes it
-    return await attempt(base, id, 'small', signal)
+    return await attempt(base, id, 'small', expected, signal)
   } catch (e) {
     if (signal?.aborted) throw e
     // older Safari cannot decode opus in WebM, so fall back to the AAC stream
-    return await attempt(base, id, 'safe', signal)
+    return await attempt(base, id, 'safe', expected, signal)
   }
 }
 
