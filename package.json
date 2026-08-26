@@ -1,0 +1,29 @@
+{
+  "name": "looptube",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "deploy": "npm run build && git add -A docs && git commit -m \"build: deploy\" && git push"
+  },
+  "dependencies": {
+    "@vueuse/core": "^11.3.0",
+    "soundtouchjs": "^0.3.0",
+    "vue": "^3.5.41"
+  },
+  "devDependencies": {
+    "@types/node": "^26.3.0",
+    "@types/youtube": "^0.1.0",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/test-utils": "^2.4.6",
+    "happy-dom": "^15.11.7",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.7",
+    "vitest": "^3.2.7",
+    "vue-tsc": "^2.2.0"
+  }
+}
