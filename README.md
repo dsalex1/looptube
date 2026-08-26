@@ -38,8 +38,10 @@ found."*
 So a resolver service does the hard part and returns an ordinary signed `googlevideo.com`
 URL. Two things make that useful:
 
-1. **Those URLs are not IP-bound.** A URL minted on the resolver's server downloads fine
-   from anywhere, so the proxy's own IP never has to satisfy YouTube's bot checks.
+1. **The signature is not tied to the resolver's own address.** A URL minted on the
+   resolver's server is served to other clients too, so nothing here has to speak SABR or
+   hold a PO token. It is not a free pass — see the datacenter wall below — but the hard
+   part is already done by the time the URL reaches us.
 2. **The browser can still do the decoding.** `decodeAudioData` handles every container
    the resolver returns, so the worker needs no ffmpeg, no yt-dlp, no container — it is a
    ~150-line relay that adds the CORS headers `googlevideo` refuses to send.
