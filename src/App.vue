@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import Controls from '@/components/Controls.vue'
 import Icon from '@/components/Icon.vue'
+import RecentGrid from '@/components/RecentGrid.vue'
 import Settings from '@/components/Settings.vue'
 import Stage from '@/components/Stage.vue'
+import StartPage from '@/components/StartPage.vue'
 import { useAudioEngine } from '@/composables/useAudioEngine'
 import { useYouTubePlayer } from '@/composables/useYouTubePlayer'
+import { cachedIds } from '@/helpers/audioCache'
 import { fromFile, fromService, synthetic, type PeaksResult } from '@/helpers/peaksSource'
+import { forget, recents, remember, type Recent } from '@/helpers/recents'
 import { emptyState, fromHash, load as loadState, save as saveState, toHash } from '@/helpers/persist'
 import { videoId } from '@/helpers/youtube'
 import type { LoopState, PaneView, Transport } from '@/types'
@@ -28,7 +32,29 @@ const peaks = ref<Uint8Array<ArrayBufferLike>>(new Uint8Array())
 const isSynthetic = ref(true)
 const status = ref('')
 const settingsOpen = ref(false)
+const recentsOpen = ref(false)
 const span = ref(DEFAULT_SPAN)
+
+// --- what has been opened before, and what is already on the device ------------------
+const recentItems = ref<Recent[]>(recents())
+const offlineIds = ref(new Set<string>())
+const refreshOffline = async () => (offlineIds.value = await cachedIds())
+const noteRecent = (entry: { id: string; title?: string; duration?: number }) => {
+  remember(entry)
+  recentItems.value = recents()
+}
+function dropRecent(dropped: string) {
+  forget(dropped)
+  recentItems.value = recents()
+}
+
+// --- how far the download has got, since the home relay is not instant ---------------
+const loaded = ref(0)
+const total = ref(0)
+const busy = ref(false)
+const progress = computed(() => (busy.value ? (total.value ? loaded.value / total.value : -1) : null))
+// once the bytes are in, the wait that remains is the decode
+const progressLabel = computed(() => (progress.value != null && progress.value >= 1 ? 'Decoding…' : 'Fetching audio…'))
 
 const yt = useYouTubePlayer(() => document.getElementById('yt-host') ?? undefined)
 const engine = useAudioEngine()
@@ -77,7 +103,9 @@ function applyState(target: Transport, state: LoopState) {
 }
 
 async function open(nextId: string, state = loadState(nextId)) {
+  recentsOpen.value = false
   id.value = nextId
+  noteRecent({ id: nextId, title: state.title })
   title.value = state.title ?? ''
   markers.value = [...state.markers]
   useEngine.value = false
@@ -103,11 +131,20 @@ let fetchToken = 0
 
 async function fetchAudio(forId: string, state: LoopState) {
   const token = ++fetchToken
-  status.value = 'Fetching audio…'
+  status.value = ''
+  loaded.value = 0
+  total.value = 0
+  busy.value = true
   try {
-    const result = await fromService(forId, yt.duration.value)
+    const result = await fromService(forId, yt.duration.value, (got, size) => {
+      if (token !== fetchToken) return
+      loaded.value = got
+      total.value = size
+    })
     if (token !== fetchToken || id.value !== forId) return
     await activate(result, state)
+    noteRecent({ id: forId, title: result.title, duration: result.duration })
+    void refreshOffline()
     status.value = ''
   } catch (e) {
     if (token !== fetchToken) return
@@ -116,6 +153,8 @@ async function fetchAudio(forId: string, state: LoopState) {
     status.value = reasonFor(e)
     const shown = status.value
     setTimeout(() => status.value === shown && (status.value = ''), 7000)
+  } finally {
+    if (token === fetchToken) busy.value = false
   }
 }
 
@@ -144,13 +183,26 @@ async function activate(result: PeaksResult, state: LoopState) {
   if (wasPlaying) engine.play()
 }
 
-function submit() {
-  const next = videoId(urlInput.value)
+const startError = ref('')
+const filePicker = ref<HTMLInputElement>()
+
+function onFileInput(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (file) void pickFile(file)
+  input.value = '' // so the same file can be picked again after a change of mind
+}
+
+function submit(raw = urlInput.value) {
+  const next = videoId(raw)
   if (!next) {
-    status.value = 'That does not look like a YouTube link'
+    const complaint = 'That does not look like a YouTube link'
+    if (id.value) status.value = complaint
+    else startError.value = complaint
     return
   }
   status.value = ''
+  startError.value = ''
   urlInput.value = ''
   void open(next)
 }
@@ -280,12 +332,18 @@ async function share() {
 }
 
 async function pickFile(file: File) {
-  status.value = 'Decoding file…'
+  busy.value = true
+  loaded.value = 0
+  total.value = 0
   try {
+    // a file with no video behind it still needs somewhere to play, so the pane keeps
+    // whatever is loaded and simply swaps the audio underneath it
     await activate(await fromFile(file), currentState())
     status.value = ''
   } catch {
     status.value = 'Could not decode that file'
+  } finally {
+    busy.value = false
   }
 }
 
@@ -307,6 +365,7 @@ function onKey(e: KeyboardEvent) {
 
 onMounted(() => {
   window.addEventListener('keydown', onKey)
+  void refreshOffline()
   const shared = fromHash(location.hash)
   if (shared) void open(shared.id, { ...emptyState(), ...shared.state })
 })
@@ -320,7 +379,7 @@ const shownStatus = computed(() => error.value || status.value)
     <header class="bar">
       <div class="brand"><Icon name="wave" stroke /><span>LoopTube</span></div>
 
-      <form class="find" @submit.prevent="submit">
+      <form v-if="id" class="find" @submit.prevent="submit()">
         <input
           v-model="urlInput"
           type="url"
@@ -334,6 +393,23 @@ const shownStatus = computed(() => error.value || status.value)
 
       <div class="title" :title="title">{{ title }}</div>
 
+      <span v-if="!id" class="spacer" />
+
+      <input ref="filePicker" type="file" accept="audio/*,video/*" hidden @change="onFileInput" />
+      <button v-if="id" class="icon" title="Open an audio file" aria-label="Open an audio file" @click="filePicker?.click()">
+        <Icon name="video" />
+      </button>
+      <!-- on the start page the recents are already on screen -->
+      <button
+        v-if="id && recentItems.length"
+        class="icon"
+        :class="{ 'icon--ok': recentsOpen }"
+        title="Recent videos"
+        aria-label="Recent videos"
+        @click="recentsOpen = !recentsOpen"
+      >
+        <Icon name="clock" stroke />
+      </button>
       <button v-if="id" class="icon" :class="{ 'icon--ok': copied }" title="Copy a link to this loop" @click="share">
         <Icon name="link" stroke />
       </button>
@@ -354,17 +430,24 @@ const shownStatus = computed(() => error.value || status.value)
       :position="currentTime"
       :synthetic="isSynthetic"
       :status="shownStatus"
+      :progress="progress"
+      :progressLabel="progressLabel"
       @seek="active.seek($event)"
       @moveMarker="moveMarker"
       @moveLoop="setLoop"
       @zoom="zoom"
     />
 
-    <div v-else class="empty">
-      <Icon name="wave" stroke />
-      <h1>Loop any YouTube video</h1>
-      <p>Paste a link above. You get A–B repeat, markers, tempo and a real waveform — the audio is decoded in your browser.</p>
-    </div>
+    <StartPage
+      v-else
+      :items="recentItems"
+      :offline="offlineIds"
+      :error="startError"
+      @submit="submit"
+      @open="open($event)"
+      @forget="dropRecent"
+      @file="pickFile"
+    />
 
     <Controls
       v-if="id"
@@ -395,7 +478,18 @@ const shownStatus = computed(() => error.value || status.value)
       @clearLoop="clearLoop"
     />
 
-    <Settings v-if="settingsOpen" :hasRealAudio="!isSynthetic" @close="settingsOpen = false" @file="pickFile" />
+    <!-- recents, reachable without giving up whatever is loaded -->
+    <div v-if="recentsOpen" class="scrim" @click.self="recentsOpen = false">
+      <div class="sheet">
+        <header>
+          <h2>Recent</h2>
+          <button class="icon" aria-label="Close" @click="recentsOpen = false"><Icon name="close" stroke /></button>
+        </header>
+        <RecentGrid :items="recentItems" :offline="offlineIds" @open="open($event)" @forget="dropRecent" />
+      </div>
+    </div>
+
+    <Settings v-if="settingsOpen" :hasRealAudio="!isSynthetic" @close="settingsOpen = false" />
   </div>
 </template>
 
@@ -434,6 +528,7 @@ const shownStatus = computed(() => error.value || status.value)
   font-weight: 600;
   cursor: pointer;
 }
+.spacer { flex: 1 1 auto; }
 .title {
   flex: 1 1 0;
   min-width: 0;
@@ -456,20 +551,34 @@ const shownStatus = computed(() => error.value || status.value)
   cursor: pointer;
 }
 .icon--ok { color: #101010; background: #e8bd6d; border-color: #e8bd6d; }
-.empty {
-  flex: 1;
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 24px;
-  text-align: center;
-  color: #6f6f6f;
+  padding: 16px;
+  z-index: 50;
 }
-.empty svg { width: 44px; height: 44px; color: #e8bd6d; }
-.empty h1 { margin: 0; font-size: 20px; color: #e6e6e6; font-weight: 600; }
-.empty p { margin: 0; max-width: 46ch; line-height: 1.5; font-size: 14px; }
+.sheet {
+  width: min(100%, 900px);
+  max-height: 84vh;
+  overflow: auto;
+  background: #121212;
+  border: 1px solid #2c2c2c;
+  border-radius: 12px;
+  padding: 16px 18px 20px;
+}
+.sheet header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.sheet h2 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: #6b6b6b;
+}
 @media (max-width: 760px) {
   .title { display: none; }
   .brand span { display: none; }

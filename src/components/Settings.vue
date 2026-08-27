@@ -4,19 +4,12 @@ import { DEFAULT_SERVICE, serviceUrl, setServiceUrl } from '@/helpers/peaksSourc
 import { ref } from 'vue'
 
 defineProps<{ hasRealAudio: boolean }>()
-const emit = defineEmits<{ (e: 'close'): void; (e: 'file', file: File): void }>()
+const emit = defineEmits<{ (e: 'close'): void }>()
 
 const service = ref(serviceUrl())
-const fileInput = ref<HTMLInputElement>()
 
 function saveService() {
   setServiceUrl(service.value)
-  emit('close')
-}
-
-function onFile(e: Event) {
-  const file = (e.target as HTMLInputElement).files?.[0]
-  if (file) emit('file', file)
   emit('close')
 }
 </script>
@@ -46,14 +39,6 @@ function onFile(e: Event) {
         </div>
       </section>
 
-      <section>
-        <h3>Load a file instead</h3>
-        <p class="why">
-          If the proxy cannot reach a video, pick the audio yourself. It never leaves your device.
-        </p>
-        <input ref="fileInput" type="file" accept="audio/*,video/*" hidden @change="onFile" />
-        <button class="btn" @click="fileInput?.click()">Choose audio file…</button>
-      </section>
     </div>
   </div>
 </template>

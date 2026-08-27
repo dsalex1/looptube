@@ -13,6 +13,7 @@ const PATHS: Record<string, string> = {
   link: 'M9 13a5 5 0 007 0l3-3a5 5 0 00-7-7l-2 2m-2 6a5 5 0 01-7 0 5 5 0 010-7l3-3',
   gear: 'M12 8a4 4 0 100 8 4 4 0 000-8zm9 4l2 2-2 4-3-1-2 1-1 3h-4l-1-3-2-1-3 1-2-4 2-2-2-2 2-4 3 1 2-1 1-3h4l1 3 2 1 3-1 2 4z',
   close: 'M6 6l12 12M18 6L6 18',
+  clock: 'M12 3a9 9 0 100 18 9 9 0 000-18zm0 4v5l3.5 2',
 }
 defineProps<{ name: keyof typeof PATHS | string; stroke?: boolean }>()
 </script>

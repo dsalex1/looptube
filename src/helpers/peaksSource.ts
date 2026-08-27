@@ -1,4 +1,5 @@
 import { computePeaks, decodeAudio } from '@/helpers/audioPeaks'
+import { cached, keep } from '@/helpers/audioCache'
 
 export interface PeaksResult {
   peaks: Uint8Array
@@ -8,7 +9,11 @@ export interface PeaksResult {
   audioUrl?: string
   /** true when the peaks are a flat bed rather than measured samples */
   synthetic?: boolean
+  /** where the bytes came from, so the UI can say why it was quick or slow */
+  source?: 'cache' | 'home' | 'worker' | 'file'
 }
+
+export type Progress = (loaded: number, total: number) => void
 
 export const SERVICE_KEY = 'looptube:service'
 
@@ -25,7 +30,7 @@ const COMPLETE_ENOUGH = 0.95
 /** A dead tunnel should cost a moment, not a minute, before we fall back. */
 const HEALTH_TIMEOUT = 5000
 const DISCOVER_TIMEOUT = 5000
-/** Re-ask where the Pi is now and then; it moves whenever it restarts. */
+/** Re-ask where the home relay is now and then; it moves whenever it restarts. */
 const DISCOVER_CACHE = 60_000
 
 let discovered: { at: number; url: string | null } | null = null
@@ -38,7 +43,7 @@ const withTimeout = (ms: number, signal?: AbortSignal) =>
  *
  * It matters because googlevideo refuses a datacenter for anything geo-restricted, so a
  * residential address is the only way to get roughly half of all music videos. The
- * address changes every time the Pi restarts, so it is asked for rather than configured.
+ * address changes every time it restarts, so it is asked for rather than configured.
  */
 async function upstream(signal?: AbortSignal): Promise<string | null> {
   if (discovered && Date.now() - discovered.at < DISCOVER_CACHE) return discovered.url
@@ -62,11 +67,58 @@ async function alive(base: string, signal?: AbortSignal) {
   }
 }
 
+/** Read the body as it arrives, so a slow relay can show how far along it is. */
+async function drain(response: Response, onProgress?: Progress): Promise<ArrayBuffer> {
+  if (!response.body || !onProgress) return await response.arrayBuffer()
+
+  const total = Number(response.headers.get('Content-Length')) || 0
+  const reader = response.body.getReader()
+  const parts: Uint8Array[] = []
+  let loaded = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    parts.push(value)
+    loaded += value.length
+    onProgress(loaded, total)
+  }
+
+  const joined = new Uint8Array(loaded)
+  let at = 0
+  for (const part of parts) {
+    joined.set(part, at)
+    at += part.length
+  }
+  return joined.buffer
+}
+
+/**
+ * Turn raw bytes into peaks plus something the engine can play.
+ *
+ * `decodeAudioData` detaches the buffer it is handed, so the untouched copy is taken
+ * first and then handed back: anything that wants the bytes afterwards — the blob to
+ * play, the copy to cache — has to work from that one, not from the original.
+ */
+async function build(bytes: ArrayBuffer, type: string, title: string, source: PeaksResult['source']) {
+  const forPlayback = bytes.slice(0)
+  const decoded = await decodeAudio(bytes)
+  const result: PeaksResult = {
+    peaks: computePeaks(decoded),
+    duration: decoded.duration,
+    title: title || undefined,
+    audioUrl: URL.createObjectURL(new Blob([forPlayback], { type })),
+    source,
+  }
+  return { decoded, result, bytes: forPlayback }
+}
+
 async function attempt(
   base: string,
   id: string,
   fmt: string,
   expected: number,
+  source: 'home' | 'worker',
+  onProgress?: Progress,
   signal?: AbortSignal
 ): Promise<PeaksResult> {
   const response = await fetch(`${base}/audio?v=${encodeURIComponent(id)}&fmt=${fmt}`, { signal })
@@ -75,11 +127,9 @@ async function attempt(
     throw new Error(`Audio service returned ${response.status}: ${detail.slice(0, 160)}`)
   }
 
-  const bytes = await response.arrayBuffer()
-  // decodeAudioData detaches what it is given, so the copy that becomes the playable
-  // blob has to be taken before decoding rather than after
-  const forPlayback = bytes.slice(0)
-  const decoded = await decodeAudio(bytes)
+  const type = response.headers.get('Content-Type') ?? 'audio/mp4'
+  const title = decodeURIComponent(response.headers.get('X-Title') ?? '')
+  const { decoded, result, bytes } = await build(await drain(response, onProgress), type, title, source)
 
   // Some googlevideo edges serve a datacenter only the first few hundred KB and then cut
   // us off. That still decodes — into a track that quietly ends early — so it is checked
@@ -87,40 +137,44 @@ async function attempt(
   if (expected && decoded.duration < expected * COMPLETE_ENOUGH)
     throw new Error(`incomplete audio: got ${decoded.duration.toFixed(0)}s of ${expected.toFixed(0)}s`)
 
-  const type = response.headers.get('Content-Type') ?? 'audio/mp4'
-  const title = decodeURIComponent(response.headers.get('X-Title') ?? '')
-  return {
-    peaks: computePeaks(decoded),
-    duration: decoded.duration,
-    title: title || undefined,
-    audioUrl: URL.createObjectURL(new Blob([forPlayback], { type })),
-  }
+  void keep(id, new Response(bytes), { title, duration: decoded.duration, type })
+  return result
 }
 
 /**
- * Real peaks for a video id.
- *
- * YouTube serves media over SABR, so the browser cannot reach the stream itself; the
- * proxy resolves it and relays the bytes with CORS headers. Decoding stays here, where
- * the platform already has a decoder for every container the proxy can hand back.
+ * Real peaks for a video id: from the cache if we have them, then the home relay, then
+ * the worker. Only the first is quick, which is the whole reason the cache exists.
  */
-export async function fromService(id: string, expected = 0, signal?: AbortSignal): Promise<PeaksResult> {
+export async function fromService(
+  id: string,
+  expected = 0,
+  onProgress?: Progress,
+  signal?: AbortSignal
+): Promise<PeaksResult> {
+  const hit = await cached(id)
+  if (hit) {
+    const type = hit.headers.get('Content-Type') ?? 'audio/mp4'
+    const title = decodeURIComponent(hit.headers.get('X-Title') ?? '')
+    const { result } = await build(await hit.arrayBuffer(), type, title, 'cache')
+    return result
+  }
+
   const worker = serviceUrl()
   if (!worker) throw new Error('No audio service configured')
 
-  // The Pi first when it is actually answering, the worker always as the floor. The
-  // worker is quicker; the Pi is the only one that can fetch geo-restricted audio.
-  const bases: string[] = []
-  const pi = await upstream(signal)
-  if (pi && (await alive(pi, signal))) bases.push(pi)
-  bases.push(worker)
+  // The home relay first when it is actually answering, the worker always as the floor.
+  // The worker is quicker; the relay is the only one that can fetch geo-restricted audio.
+  const bases: { url: string; source: 'home' | 'worker' }[] = []
+  const home = await upstream(signal)
+  if (home && (await alive(home, signal))) bases.push({ url: home, source: 'home' })
+  bases.push({ url: worker, source: 'worker' })
 
   let last: unknown
-  for (const base of bases)
+  for (const { url, source } of bases)
     // opus is a third of the size; older Safari cannot decode it, hence the AAC retry
     for (const fmt of ['small', 'safe']) {
       try {
-        return await attempt(base, id, fmt, expected, signal)
+        return await attempt(url, id, fmt, expected, source, onProgress, signal)
       } catch (e) {
         if (signal?.aborted) throw e
         last = e
@@ -132,13 +186,8 @@ export async function fromService(id: string, expected = 0, signal?: AbortSignal
 /** Peaks from a file the user picked, decoded entirely in the browser. */
 export async function fromFile(file: File): Promise<PeaksResult> {
   const bytes = await file.arrayBuffer()
-  const forPlayback = bytes.slice(0)
-  const decoded = await decodeAudio(bytes)
-  return {
-    peaks: computePeaks(decoded),
-    duration: decoded.duration,
-    audioUrl: URL.createObjectURL(new Blob([forPlayback], { type: file.type || 'audio/mpeg' })),
-  }
+  const { result } = await build(bytes, file.type || 'audio/mpeg', '', 'file')
+  return result
 }
 
 /**

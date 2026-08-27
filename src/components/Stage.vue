@@ -2,8 +2,9 @@
 import Icon from '@/components/Icon.vue'
 import WaveformCanvas from '@/components/WaveformCanvas.vue'
 import type { PaneView } from '@/types'
+import { computed } from 'vue'
 
-defineProps<{
+const props = defineProps<{
   view: PaneView
   peaks: Uint8Array
   duration: number
@@ -17,6 +18,9 @@ defineProps<{
   /** the waveform is a flat bed because no real samples could be got for this video */
   synthetic: boolean
   status: string
+  /** fetching audio: 0..1 when the length is known, -1 while it is not */
+  progress: number | null
+  progressLabel: string
 }>()
 
 defineEmits<{
@@ -25,6 +29,13 @@ defineEmits<{
   (e: 'moveLoop', which: 'a' | 'b', seconds: number): void
   (e: 'zoom', span: number): void
 }>()
+
+const RADIUS = 20
+const CIRCUMFERENCE = 2 * Math.PI * RADIUS
+
+const determinate = computed(() => props.progress != null && props.progress >= 0)
+const dash = computed(() => CIRCUMFERENCE * (1 - Math.min(1, Math.max(0, props.progress ?? 0))))
+const percent = computed(() => `${Math.round((props.progress ?? 0) * 100)}%`)
 </script>
 
 <template>
@@ -53,13 +64,30 @@ defineEmits<{
         @moveLoop="(w, s) => $emit('moveLoop', w, s)"
         @zoom="$emit('zoom', $event)"
       />
-      <div v-if="synthetic" class="hint">
+      <div v-if="synthetic && progress == null" class="hint">
         <Icon name="wave" stroke />
-        <span>No audio samples for this video — markers and A-B still work. Add an extractor in settings for a real waveform.</span>
+        <span>No audio samples for this video — markers and A-B still work.</span>
       </div>
     </div>
 
-    <div v-if="status" class="status">{{ status }}</div>
+    <!-- fetching the audio can take a while off the home relay, so say so and show how far -->
+    <div v-if="progress != null" class="busy">
+      <svg class="ring" viewBox="0 0 48 48" :class="{ spin: !determinate }">
+        <circle class="track" cx="24" cy="24" :r="RADIUS" />
+        <circle
+          class="head"
+          cx="24"
+          cy="24"
+          :r="RADIUS"
+          :stroke-dasharray="CIRCUMFERENCE"
+          :stroke-dashoffset="determinate ? dash : CIRCUMFERENCE * 0.75"
+        />
+      </svg>
+      <span class="busy__label">{{ progressLabel }}</span>
+      <span v-if="determinate" class="busy__pct">{{ percent }}</span>
+    </div>
+
+    <div v-else-if="status" class="status">{{ status }}</div>
   </div>
 </template>
 
@@ -81,4 +109,27 @@ defineEmits<{
   padding: 6px 14px; border-radius: 999px; font-size: 13px;
   background: rgba(20, 20, 20, 0.92); color: #e6e6e6; border: 1px solid #2a2a2a;
 }
+
+.busy {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px 8px 10px;
+  border-radius: 999px;
+  background: rgba(16, 16, 16, 0.94);
+  border: 1px solid #2e2e2e;
+  color: #e6e6e6;
+  font-size: 13px;
+}
+.ring { width: 26px; height: 26px; flex: none; transform: rotate(-90deg); }
+.ring circle { fill: none; stroke-width: 5; }
+.ring .track { stroke: #2c2c2c; }
+.ring .head { stroke: #e8bd6d; stroke-linecap: round; transition: stroke-dashoffset 0.15s linear; }
+.ring.spin { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(270deg); } }
+.busy__pct { font-variant-numeric: tabular-nums; color: #9a9a9a; }
 </style>

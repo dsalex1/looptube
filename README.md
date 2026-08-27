@@ -16,6 +16,8 @@ this is the same transport bolted onto YouTube instead of an uploaded track.
 - **Level trim** with a brick-wall limiter, so quiet backing tracks come up without clipping
 - **Two views** — the video, or the waveform — swapped from the bottom-right corner
 - **Overview strip** above the transport: the whole track at a glance, tap to seek
+- **Recent videos** on the start page and behind the clock icon while one is open
+- **Cached audio**, so re-opening a track costs ~0.7 s instead of another trip to the Pi
 - **State per video** in `localStorage`, plus a shareable permalink
 - **Installable** as a PWA, and laid out for a phone as well as a desktop
 
