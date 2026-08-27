@@ -112,6 +112,15 @@ async function build(bytes: ArrayBuffer, type: string, title: string, source: Pe
   return { decoded, result, bytes: forPlayback }
 }
 
+/**
+ * How long to wait for the first byte before giving up on a source. The home relay can
+ * pass its health check and still wedge on a particular video — a tunnel that answers but
+ * never streams — which would otherwise hang the whole load, since the body has no
+ * deadline of its own. The guard is cleared the moment headers arrive, so a slow but
+ * working download is never cut off mid-stream.
+ */
+const FIRST_BYTE_TIMEOUT = 12_000
+
 async function attempt(
   base: string,
   id: string,
@@ -121,7 +130,15 @@ async function attempt(
   onProgress?: Progress,
   signal?: AbortSignal
 ): Promise<PeaksResult> {
-  const response = await fetch(`${base}/audio?v=${encodeURIComponent(id)}&fmt=${fmt}`, { signal })
+  const ttfb = new AbortController()
+  const timer = setTimeout(() => ttfb.abort(new DOMException('first-byte timeout', 'TimeoutError')), FIRST_BYTE_TIMEOUT)
+  const guard = signal ? AbortSignal.any([signal, ttfb.signal]) : ttfb.signal
+  let response: Response
+  try {
+    response = await fetch(`${base}/audio?v=${encodeURIComponent(id)}&fmt=${fmt}`, { signal: guard })
+  } finally {
+    clearTimeout(timer) // headers are in (or we failed); the body streams without the deadline
+  }
   if (!response.ok) {
     const detail = await response.text().catch(() => '')
     throw new Error(`Audio service returned ${response.status}: ${detail.slice(0, 160)}`)
