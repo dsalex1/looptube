@@ -17,6 +17,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -128,6 +129,15 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", "/health"):
             return self._json({"ok": True, "service": "looptube-pi"})
 
+        # What the watchdog checks instead of /health. A dropped edge connection stalls an
+        # audio-sized transfer while a one-line /health reply still slips through, so a
+        # tiny liveness ping cannot tell a working tunnel from a broken one. This mimics an
+        # audio response — a short wait for the first byte, then a sized body streamed in
+        # chunks — without a YouTube round-trip, so failing it means the tunnel itself is
+        # the problem.
+        if path == "/probe":
+            return self._probe(params)
+
         if not VIDEO_ID.match(video_id):
             return self._json({"error": "pass ?v=<11-character youtube id>"}, 400)
 
@@ -152,6 +162,23 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": f"upstream {e.code}"}, 502)
         except Exception as e:  # a relay that dies on one bad video is worse than one that reports
             return self._json({"error": str(e)[:200]}, 502)
+
+    def _probe(self, params: dict[str, str]):
+        # bounded so a stray request cannot ask the Pi to stream forever
+        size = min(max(int(params.get("bytes", 262144) or 262144), 1), 4 << 20)
+        delay = min(max(float(params.get("delay", 1.0) or 1.0), 0.0), 10.0)
+        time.sleep(delay) # stand in for the resolve that precedes real audio's first byte
+        self.send_response(200)
+        headers = {"Content-Type": "application/octet-stream", "Content-Length": str(size), "Cache-Control": "no-store"}
+        for key, value in {**CORS, **headers}.items():
+            self.send_header(key, value)
+        self.end_headers()
+        if self.command == "HEAD":
+            return
+        block = b"\0" * (64 * 1024)
+        while size > 0:
+            self.wfile.write(block[:size] if size < len(block) else block)
+            size -= len(block)
 
     def _audio(self, video_id: str, prefer: str | None):
         meta = resolve(video_id)

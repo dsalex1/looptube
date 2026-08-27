@@ -79,12 +79,28 @@ def announce(url: str) -> bool:
     return False
 
 
+# The probe stands in for an audio request: a sized body the tunnel has to carry whole.
+# A one-line /health reply proves the name resolves, not that it can move audio — a dropped
+# edge connection stalls the transfer while the tiny reply still gets through — so the whole
+# body is pulled and counted, and a short read counts as unreachable.
+PROBE_BYTES = 262144
+PROBE_TIMEOUT = 25
+
+
 def reachable(url: str) -> bool:
-    """Is the *public* name still routed here? The local relay being fine proves nothing."""
-    request = urllib.request.Request(f"{url}/health", headers={"User-Agent": UA})
+    """Can the *public* name still carry an audio-sized response? /health cannot tell."""
+    request = urllib.request.Request(f"{url}/probe?bytes={PROBE_BYTES}", headers={"User-Agent": UA})
     try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            return response.status == 200
+        with urllib.request.urlopen(request, timeout=PROBE_TIMEOUT) as response:
+            if response.status != 200:
+                return False
+            got = 0
+            while True:
+                block = response.read(65536)
+                if not block:
+                    break
+                got += len(block)
+            return got == PROBE_BYTES
     except Exception:
         return False
 
