@@ -1,7 +1,10 @@
-import { PitchShifter } from 'soundtouchjs'
 import { computed, onUnmounted, ref, watch } from 'vue'
 
-const BUFFER_SIZE = 4096
+/** what a worklet is handed per call, and so how far its output trails the playhead */
+const RENDER_QUANTUM = 128
+
+// bundled separately, since a worklet cannot resolve soundtouchjs itself - see build:worklet
+const WORKLET_URL = `${import.meta.env.BASE_URL}soundtouch-worklet.js`
 
 /**
  * Streaming is not an option here: independent tempo and pitch need the whole
@@ -24,7 +27,8 @@ export function useAudioEngine() {
 
   let context: AudioContext | null = null
   let buffer: AudioBuffer | null = null
-  let shifter: PitchShifter | null = null
+  let shifter: AudioWorkletNode | null = null
+  let shifterPending: Promise<AudioWorkletNode | null> | null = null
   let gain: GainNode | null = null
   let limiter: DynamicsCompressorNode | null = null
   let preTap: AnalyserNode | null = null
@@ -84,6 +88,7 @@ export function useAudioEngine() {
   function teardownShifter() {
     shifter?.disconnect()
     shifter = null
+    shifterPending = null
     pause()
   }
 
@@ -111,13 +116,46 @@ export function useAudioEngine() {
     }
   }
 
+  /**
+   * The whole track is handed to the worklet once, transferred rather than copied so a
+   * long recording is never held twice; `buffer` is spent afterwards and dropped.
+   */
+  async function createShifter(token: number) {
+    const ctx = audioContext()
+    try {
+      // this needs a secure origin, so plain http on a LAN address will not do
+      await ctx.audioWorklet.addModule(WORKLET_URL)
+    } catch (e) {
+      console.error('Failed to load the audio worklet:', e)
+      error.value = 'Could not start audio - needs https and a 2021 or newer browser'
+      return null
+    }
+    if (token !== loadToken || !buffer) return null
+
+    const node = new AudioWorkletNode(ctx, 'soundtouch-processor', {
+      numberOfInputs: 0,
+      outputChannelCount: [2],
+      processorOptions: { tempo: tempo.value, pitch: pitch.value },
+    })
+    node.port.onmessage = ({ data }) => data.ended && pause()
+
+    const channels = [buffer.getChannelData(0), buffer.getChannelData(buffer.numberOfChannels > 1 ? 1 : 0)]
+    node.port.postMessage(
+      { channels, startFrame: Math.round(currentTime.value * ctx.sampleRate) },
+      [...new Set(channels.map((c) => c.buffer))] // mono hands us the same channel twice
+    )
+    buffer = null
+    shifter = node
+    return node
+  }
+
   function ensureShifter() {
-    if (shifter || !buffer) return shifter
-    shifter = new PitchShifter(audioContext(), buffer, BUFFER_SIZE, () => pause())
-    shifter.tempo = tempo.value
-    shifter.pitchSemitones = pitch.value
-    seekShifter(currentTime.value)
-    return shifter
+    if (shifter) return Promise.resolve(shifter)
+    if (!buffer) return Promise.resolve(null)
+    return (shifterPending ??= createShifter(loadToken).then((node) => {
+      if (!node) shifterPending = null // so a later play can try again
+      return node
+    }))
   }
 
   // SoundTouch reports how far it has read ahead, which leads what you hear by a few
@@ -144,12 +182,13 @@ export function useAudioEngine() {
   }
 
   async function play() {
-    const s = ensureShifter()
+    const s = await ensureShifter()
     if (!s) return
     await audioContext().resume()
     if (looping() && (currentTime.value < loopA.value! || currentTime.value >= loopB.value!)) seek(loopA.value!)
     rebase()
     s.connect(output())
+    s.port.postMessage({ playing: true })
     playing.value = true
     tick()
   }
@@ -158,6 +197,7 @@ export function useAudioEngine() {
     // frames stop while the page is hidden, so take the position from the clock rather
     // than trusting whatever the last frame wrote
     if (playing.value) currentTime.value = Math.max(0, Math.min(positionNow(), duration.value))
+    shifter?.port.postMessage({ playing: false })
     shifter?.disconnect()
     playing.value = false
     if (frame) cancelAnimationFrame(frame)
@@ -176,9 +216,9 @@ export function useAudioEngine() {
    * than one peak: a caller that knows where the playhead is can place every sample at
    * the moment it belongs to, instead of smearing the whole window over one instant.
    *
-   * `latency` is how far behind the playhead that window sits. The pitch shifter is a
-   * ScriptProcessor, so what it computed for a given position only reaches the graph a
-   * whole buffer later, and that offset is what would otherwise drag the readings late.
+   * `latency` is how far behind the playhead that window sits: the shifter computes a
+   * render quantum at a time, so what it produced for a given position only reaches the
+   * graph a quantum later, and that offset is what would otherwise drag readings late.
    */
   function levels() {
     preTap?.getFloatTimeDomainData(preSamples)
@@ -187,13 +227,13 @@ export function useAudioEngine() {
       pre: preSamples,
       post: postSamples,
       sampleRate: context?.sampleRate ?? 48000,
-      latency: BUFFER_SIZE / (context?.sampleRate ?? 48000),
+      latency: RENDER_QUANTUM / (context?.sampleRate ?? 48000),
       reduction: limiter?.reduction ?? 0,
     }
   }
 
   const seekShifter = (seconds: number) => {
-    if (shifter && duration.value) shifter.percentagePlayed = seconds / duration.value
+    shifter?.port.postMessage({ seekFrame: Math.round(seconds * audioContext().sampleRate) })
   }
 
   function seek(seconds: number) {
@@ -208,9 +248,9 @@ export function useAudioEngine() {
   // the clock slope changes with tempo, so restart the measurement from here
   watch(tempo, (v) => {
     rebase()
-    if (shifter) shifter.tempo = v
+    shifter?.port.postMessage({ tempo: v })
   })
-  watch(pitch, (v) => shifter && (shifter.pitchSemitones = v))
+  watch(pitch, (v) => shifter?.port.postMessage({ pitch: v }))
   // ramped rather than set, so dragging the trim does not click
   watch(gainDb, (v) => {
     gain?.gain.setTargetAtTime(amplitude(v), audioContext().currentTime, 0.01)

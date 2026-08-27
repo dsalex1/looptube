@@ -8,7 +8,10 @@
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "deploy": "npm run build && git add -A docs && git commit -m \"build: deploy\" && git push"
+    "deploy": "npm run build && git add -A docs && git commit -m \"build: deploy\" && git push",
+    "build:worklet": "esbuild src/audio/soundtouchWorklet.js --bundle --format=iife --target=safari14 --outfile=public/soundtouch-worklet.js",
+    "predev": "npm run build:worklet",
+    "prebuild": "npm run build:worklet"
   },
   "dependencies": {
     "@vueuse/core": "^11.3.0",
