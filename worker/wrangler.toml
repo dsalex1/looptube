@@ -2,5 +2,11 @@ name = "looptube-audio"
 main = "src/index.js"
 compatibility_date = "2025-01-01"
 
+# Where the Pi announces itself. A short TTL is the liveness check: a Pi that stops
+# heartbeating disappears on its own and the app falls back without being told.
+[[kv_namespaces]]
+binding = "UPSTREAM"
+id = "6fca7c1d49d34f7189f43d183bd00498"
+
 [observability]
 enabled = true

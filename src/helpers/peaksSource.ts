@@ -22,6 +22,46 @@ export const setServiceUrl = (url: string) => localStorage.setItem(SERVICE_KEY, 
 /** Anything shorter than this much of the real track is a cut-off download, not a track. */
 const COMPLETE_ENOUGH = 0.95
 
+/** A dead tunnel should cost a moment, not a minute, before we fall back. */
+const HEALTH_TIMEOUT = 5000
+const DISCOVER_TIMEOUT = 5000
+/** Re-ask where the Pi is now and then; it moves whenever it restarts. */
+const DISCOVER_CACHE = 60_000
+
+let discovered: { at: number; url: string | null } | null = null
+
+const withTimeout = (ms: number, signal?: AbortSignal) =>
+  signal ? AbortSignal.any([signal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms)
+
+/**
+ * Where the home relay currently is, if it is up.
+ *
+ * It matters because googlevideo refuses a datacenter for anything geo-restricted, so a
+ * residential address is the only way to get roughly half of all music videos. The
+ * address changes every time the Pi restarts, so it is asked for rather than configured.
+ */
+async function upstream(signal?: AbortSignal): Promise<string | null> {
+  if (discovered && Date.now() - discovered.at < DISCOVER_CACHE) return discovered.url
+  try {
+    const r = await fetch(`${serviceUrl()}/upstream`, { signal: withTimeout(DISCOVER_TIMEOUT, signal) })
+    const { url } = (await r.json()) as { url: string | null }
+    discovered = { at: Date.now(), url: url?.replace(/\/$/, '') ?? null }
+  } catch {
+    discovered = { at: Date.now(), url: null }
+  }
+  return discovered.url
+}
+
+/** The registration outlives a crash by design, so being listed is not being reachable. */
+async function alive(base: string, signal?: AbortSignal) {
+  try {
+    const r = await fetch(`${base}/health`, { signal: withTimeout(HEALTH_TIMEOUT, signal) })
+    return r.ok
+  } catch {
+    return false
+  }
+}
+
 async function attempt(
   base: string,
   id: string,
@@ -65,16 +105,28 @@ async function attempt(
  * the platform already has a decoder for every container the proxy can hand back.
  */
 export async function fromService(id: string, expected = 0, signal?: AbortSignal): Promise<PeaksResult> {
-  const base = serviceUrl()
-  if (!base) throw new Error('No audio service configured')
-  try {
-    // opus is a third of the size, and every current browser decodes it
-    return await attempt(base, id, 'small', expected, signal)
-  } catch (e) {
-    if (signal?.aborted) throw e
-    // older Safari cannot decode opus in WebM, so fall back to the AAC stream
-    return await attempt(base, id, 'safe', expected, signal)
-  }
+  const worker = serviceUrl()
+  if (!worker) throw new Error('No audio service configured')
+
+  // The Pi first when it is actually answering, the worker always as the floor. The
+  // worker is quicker; the Pi is the only one that can fetch geo-restricted audio.
+  const bases: string[] = []
+  const pi = await upstream(signal)
+  if (pi && (await alive(pi, signal))) bases.push(pi)
+  bases.push(worker)
+
+  let last: unknown
+  for (const base of bases)
+    // opus is a third of the size; older Safari cannot decode it, hence the AAC retry
+    for (const fmt of ['small', 'safe']) {
+      try {
+        return await attempt(base, id, fmt, expected, signal)
+      } catch (e) {
+        if (signal?.aborted) throw e
+        last = e
+      }
+    }
+  throw last ?? new Error('no audio source could serve this video')
 }
 
 /** Peaks from a file the user picked, decoded entirely in the browser. */

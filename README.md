@@ -96,11 +96,42 @@ Measured over 12 videos on Cloudflare: **7 give a real waveform, 5 are geo-restr
 The geo-restricted ones skew towards major-label music, which is unfortunate for a
 practice tool — for those, load the audio from a file and everything works.
 
-The one host that would clear this is a **residential** address. `yt-dlp` pulls a track
-from a home connection in 4.5 s with no PO token at all. Running the relay on a machine at
-home behind a Cloudflare Tunnel keeps the iPad working — it still talks to a public HTTPS
-URL — while the fetch to googlevideo comes from an address Google does not refuse. Paste
-the tunnel URL under the gear icon and no code changes.
+### The home relay
+
+The one address that clears all of this is a **residential** one, so `pi/` is the same
+relay written to run at home. With it up, all twelve test videos return a real waveform,
+geo-restricted ones included:
+
+| source | usable | geo-restricted | typical |
+| --- | --- | --- | --- |
+| Cloudflare worker | 7 / 12 | refused | ~2 s |
+| Raspberry Pi at home | **12 / 12** | **works** | 3–19 s |
+
+The app asks the worker where the Pi is, prefers it when it answers, and falls back to
+the worker otherwise — so the worker is the floor, never a single point of failure.
+
+It is deliberately not configured anywhere. A quick tunnel is issued a new hostname every
+start, so the Pi announces its own address to the worker, which keeps it under a short
+TTL. A restart, a reboot or a new WAN address is then just another announcement, and a Pi
+that stops announcing disappears on its own.
+
+Three things worth knowing, all of them learned the hard way:
+
+- **cloudflared defaults to QUIC, which pegs an ARMv6 core.** The same transfer took
+  172 s over QUIC and 14.7 s over `--protocol http2`.
+- **A dropped edge connection retires the hostname**, but cloudflared reconnects the
+  tunnel and keeps reporting itself healthy — the dead name then answers 530 forever. So
+  the watchdog checks the *public* URL from outside rather than the relay from inside, and
+  drops the tunnel to earn a fresh name.
+- **Cloudflare answers urllib's default user agent with a 1010** before the request
+  reaches the worker, so the announcement has to look like a browser.
+
+```bash
+cd pi
+LOOPTUBE_SECRET=<the worker's REGISTER_SECRET> bash install.sh
+```
+
+Standard library only — no pip, no Node. It runs on a 2012 Raspberry Pi Model B.
 
 ### If the proxy cannot reach a video
 
@@ -119,7 +150,9 @@ src/               the app (Vue 3 + Vite, static, no backend)
   components/
     WaveformCanvas.vue    vendored from asla
     JogStrip.vue          vendored from asla
-worker/            the Cloudflare Worker that resolves and relays audio
+worker/            the Cloudflare Worker: resolves and relays audio, and holds the
+                   registration of whichever home relay is currently up
+pi/                the same relay for a machine at home, plus its tunnel and units
 docs/              the built site, served by GitHub Pages
 ```
 
