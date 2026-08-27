@@ -5,6 +5,8 @@ import RecentGrid from '@/components/RecentGrid.vue'
 import Settings from '@/components/Settings.vue'
 import Stage from '@/components/Stage.vue'
 import StartPage from '@/components/StartPage.vue'
+import StemBar from '@/components/StemBar.vue'
+import { separate, type StemPhase } from '@/helpers/stems'
 import { useAudioEngine } from '@/composables/useAudioEngine'
 import { useYouTubePlayer } from '@/composables/useYouTubePlayer'
 import { cachedIds } from '@/helpers/audioCache'
@@ -80,6 +82,40 @@ const tempo = proxy('tempo')
 const pitch = proxy('pitch')
 const gainDb = proxy('gainDb')
 
+// --- stems: once real audio is playing, split it and offer the parts as mute toggles ----
+const stemPhase = ref<StemPhase | ''>('')
+const stemNames = computed(() => engine.stemNames.value)
+const stemMuted = computed(() => engine.stemMuted.value)
+let stemController: AbortController | null = null
+
+function resetStems() {
+  stemController?.abort()
+  stemController = null
+  stemPhase.value = ''
+  engine.clearStems()
+}
+
+async function separateStems(forId: string, name: string) {
+  resetStems()
+  const controller = new AbortController()
+  stemController = controller
+  const mine = () => stemController === controller && id.value === forId
+  try {
+    const bytes = await separate(forId, name, (p) => mine() && (stemPhase.value = p), controller.signal)
+    if (!mine()) return
+    await engine.setStems(bytes) // engine.stemPeaks now drives the waveform (watch below)
+    stemPhase.value = ''
+  } catch (e) {
+    if (controller.signal.aborted) return
+    console.warn('Stem separation failed:', e)
+    stemPhase.value = 'failed'
+    setTimeout(() => stemPhase.value === 'failed' && (stemPhase.value = ''), 5000)
+  }
+}
+
+// the mix peaks follow every mute toggle, so the waveform is always the sum of what plays
+watch(engine.stemPeaks, (p) => p.length && ((peaks.value = p), (isSynthetic.value = false)))
+
 const currentTime = computed(() => active.value.currentTime.value)
 // the engine only knows the duration once it has decoded, so the player's stands in
 const duration = computed(() => active.value.duration.value || yt.duration.value)
@@ -104,6 +140,7 @@ function applyState(target: Transport, state: LoopState) {
 
 async function open(nextId: string, state = loadState(nextId)) {
   recentsOpen.value = false
+  resetStems()
   id.value = nextId
   noteRecent({ id: nextId, title: state.title })
   title.value = state.title ?? ''
@@ -146,6 +183,8 @@ async function fetchAudio(forId: string, state: LoopState) {
     noteRecent({ id: forId, title: result.title, duration: result.duration })
     void refreshOffline()
     status.value = ''
+    // real audio is now playing; split it in the background and offer the parts as toggles
+    if (result.audioUrl) void separateStems(forId, result.title ?? forId)
   } catch (e) {
     if (token !== fetchToken) return
     console.warn('Audio service failed:', e)
@@ -332,6 +371,7 @@ async function share() {
 }
 
 async function pickFile(file: File) {
+  resetStems() // a picked file has no video id to split; drop any stems from before
   busy.value = true
   loaded.value = 0
   total.value = 0
@@ -436,6 +476,14 @@ const shownStatus = computed(() => error.value || status.value)
       @moveMarker="moveMarker"
       @moveLoop="setLoop"
       @zoom="zoom"
+    />
+
+    <StemBar
+      v-if="id && useEngine"
+      :names="stemNames"
+      :muted="stemMuted"
+      :phase="stemPhase"
+      @toggle="engine.toggleStem"
     />
 
     <StartPage

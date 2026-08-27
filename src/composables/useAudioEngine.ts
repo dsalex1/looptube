@@ -1,4 +1,6 @@
 import { computed, onUnmounted, ref, watch } from 'vue'
+import { computePeaks } from '@/helpers/audioPeaks'
+import { STEM_NAMES } from '@/helpers/stems'
 
 /** what a worklet is handed per call, and so how far its output trails the playhead */
 const RENDER_QUANTUM = 128
@@ -24,6 +26,16 @@ export function useAudioEngine() {
   const gainDb = ref(0)
   /** A-B only repeats while the loop controls are on screen */
   const loopEnabled = ref(true)
+
+  // --- stems --------------------------------------------------------------------------
+  // When a track has been split, the engine plays a live mix of its non-muted stems: the
+  // same single-worklet chain, just fed a buffer that is re-summed whenever a stem is
+  // toggled. The residual `other` is always in the mix, so muting nothing sounds untouched.
+  const stemNames = ref<string[]>([]) // the toggleable ones, in display order
+  const stemMuted = ref<Record<string, boolean>>({})
+  const stemPeaks = ref<Uint8Array>(new Uint8Array()) // peaks of the current mix, for the waveform
+  const stems = new Map<string, AudioBuffer>()
+  const hasStems = () => stemNames.value.length > 0
 
   let context: AudioContext | null = null
   let buffer: AudioBuffer | null = null
@@ -96,6 +108,7 @@ export function useAudioEngine() {
   async function load(url: string, knownDuration = 0) {
     const token = ++loadToken
     teardownShifter()
+    clearStems() // a new track starts without stems until it is split again
     buffer = null
     duration.value = knownDuration
     currentTime.value = 0
@@ -114,6 +127,67 @@ export function useAudioEngine() {
     } finally {
       if (token === loadToken) loading.value = false
     }
+  }
+
+  function clearStems() {
+    stems.clear()
+    stemNames.value = []
+    stemMuted.value = {}
+    stemPeaks.value = new Uint8Array()
+  }
+
+  /** A fresh stereo buffer summing every non-muted stem, plus the always-on `other` bed. */
+  function buildMix(): AudioBuffer | null {
+    if (!stems.size) return null
+    const ctx = audioContext()
+    const active = [...stems.entries()].filter(([name]) => name === 'other' || !stemMuted.value[name])
+    const length = Math.max(...[...stems.values()].map((b) => b.length))
+    const mix = ctx.createBuffer(2, length, ctx.sampleRate)
+    for (let ch = 0; ch < 2; ch++) {
+      const out = mix.getChannelData(ch)
+      for (const [, buf] of active) {
+        const src = buf.getChannelData(Math.min(ch, buf.numberOfChannels - 1))
+        for (let i = 0; i < src.length; i++) out[i] += src[i]
+      }
+    }
+    return mix
+  }
+
+  /**
+   * Rebuild the playing buffer from the current mute state, holding the playhead where it
+   * is. The peaks are read off the mix before its channels are transferred to the worklet,
+   * so the waveform tracks exactly what is audible.
+   */
+  async function applyStemMix() {
+    const at = currentTime.value
+    const wasPlaying = playing.value
+    const mix = buildMix()
+    if (!mix) return
+    stemPeaks.value = computePeaks(mix)
+    teardownShifter() // drops the old worklet; a new one is built from the new mix below
+    buffer = mix
+    duration.value = mix.duration
+    currentTime.value = Math.min(at, mix.duration)
+    if (wasPlaying) await play()
+  }
+
+  /** Adopt a freshly separated set of stems (raw bytes per stem) and start playing the mix. */
+  async function setStems(bytesByStem: Record<string, ArrayBuffer>) {
+    const ctx = audioContext()
+    const decoded = await Promise.all(
+      Object.entries(bytesByStem).map(async ([name, bytes]) => [name, await ctx.decodeAudioData(bytes)] as const)
+    )
+    stems.clear()
+    for (const [name, buf] of decoded) stems.set(name, buf)
+    stemNames.value = STEM_NAMES.filter((n) => stems.has(n))
+    stemMuted.value = Object.fromEntries(stemNames.value.map((n) => [n, false]))
+    await applyStemMix()
+  }
+
+  function toggleStem(name: string) {
+    if (!stems.has(name)) return
+    stemMuted.value = { ...stemMuted.value, [name]: !stemMuted.value[name] }
+    void applyStemMix()
   }
 
   /**
@@ -259,6 +333,7 @@ export function useAudioEngine() {
 
   onUnmounted(() => {
     teardownShifter()
+    clearStems()
     buffer = null
     gain = null
     limiter = null
@@ -270,5 +345,6 @@ export function useAudioEngine() {
   return {
     currentTime, duration, playing, loading, error, tempo, pitch, gainDb,
     loopA, loopB, loopEnabled, limiterCeilingDb, load, play, pause, toggle, seek, skip, levels,
+    stemNames, stemMuted, stemPeaks, hasStems, setStems, toggleStem, clearStems,
   }
 }
