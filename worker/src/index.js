@@ -50,7 +50,7 @@ const CORS = {
 
   'Access-Control-Allow-Origin': '*',
 
-  'Access-Control-Allow-Methods': 'GET,HEAD,OPTIONS',
+  'Access-Control-Allow-Methods': 'GET,HEAD,POST,OPTIONS',
 
   'Access-Control-Allow-Headers': 'Range,Content-Type',
 
@@ -398,6 +398,141 @@ function parseRange(header, total) {
 
 
 
+/* ---------------------------------------------------------------------- stems ----- */
+
+/**
+ * Stem separation, driven through Moises' own studio API on the user's Premium plan. The
+ * worker holds the credential and does the three privileged steps — sign in, upload, make
+ * the task — then hands back the finished stem URLs. Those are public, CORS-*, range-
+ * serving and immutable, so the browser fetches and caches them directly; no stem audio
+ * passes through this worker.
+ */
+
+const FIREBASE_KEY = 'AIzaSyDWcFRZcUnN5EPNNA7jrcuS3HlIvMqtuCs' // public web key, referrer-locked
+const MOISES_GQL = 'https://api.moises.ai/graphql'
+const TOKEN_KEY = 'moises:token'
+const TOKEN_TTL = 3000 // under Firebase's 3600 s, so a cached token is never spent near expiry
+
+// Studio sends these on every call. The API 500s on a mutation missing the apollo client
+// name, and wants the bare token with no "Bearer " prefix — both cost an hour to find.
+const moisesHeaders = (token) => ({
+  authorization: token,
+  'x-client-name': 'ai.moises-studio-web',
+  'x-client-version': '1.0.0',
+  'apollographql-client-name': 'ai.moises-studio-web',
+  'apollographql-client-version': '0.1.0',
+  'apollographql-client-locale': 'en-US',
+  accept: 'application/graphql-response+json, application/json',
+  'content-type': 'application/json',
+  'user-agent': UA,
+  origin: 'https://studio.moises.ai',
+  referer: 'https://studio.moises.ai/',
+})
+
+const VALID_STEMS = new Set(['vocals', 'guitars', 'bass', 'drums', 'piano', 'keys', 'wind', 'strings'])
+const MAX_STEMS = 5 // OPERATION_NOT_ALLOWED_MORE_THAN_5_STEMS; the residual "other" is added on top
+
+/** A cached Firebase ID token, or a fresh one signed in from email+password. */
+async function moisesToken(env) {
+  const cached = await env.UPSTREAM?.get(TOKEN_KEY)
+  if (cached) return cached
+  if (!env.MOISES_EMAIL || !env.MOISES_PASSWORD) throw new Error('moises credentials not configured')
+  const r = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${FIREBASE_KEY}`, {
+    method: 'POST',
+    // the key's referrer restriction is only a header check, so sending one is enough
+    headers: { 'content-type': 'application/json', referer: 'https://studio.moises.ai/', 'user-agent': UA },
+    body: JSON.stringify({ email: env.MOISES_EMAIL, password: env.MOISES_PASSWORD, returnSecureToken: true }),
+  })
+  const j = await r.json().catch(() => ({}))
+  if (!j.idToken) throw new Error(`moises sign-in failed: ${j.error?.message ?? r.status}`)
+  await env.UPSTREAM?.put(TOKEN_KEY, j.idToken, { expirationTtl: TOKEN_TTL })
+  return j.idToken
+}
+
+async function moisesGql(token, query, variables) {
+  const r = await fetch(MOISES_GQL, {
+    method: 'POST',
+    headers: moisesHeaders(token),
+    body: JSON.stringify({ query, variables: variables ?? {} }),
+  })
+  const j = await r.json().catch(() => null)
+  if (!j) throw new Error(`moises ${r.status}`)
+  if (j.errors) throw new Error(j.errors[0].message)
+  return j.data
+}
+
+/**
+ * Upload one file's bytes into Moises and start a separation. Moises hands back a GCS
+ * signed PUT, so the bytes go straight to storage and only the two small mutations touch
+ * this worker. Returns the task id to poll.
+ */
+async function startSeparation(token, audioBytes, name, stems) {
+  const { uploadFile } = await moisesGql(
+    token,
+    'mutation($i:String!){uploadFile(input:$i,type:FILESYSTEM,resumable:false){signedUrl tempLocation}}',
+    { i: `${name}.audio` },
+  )
+  const put = await fetch(uploadFile.signedUrl, { method: 'PUT', body: audioBytes })
+  if (!put.ok) throw new Error(`upload PUT ${put.status}`)
+  const { createTask } = await moisesGql(
+    token,
+    'mutation($f:FileInput!,$o:[OperationInput]){createTask(file:$f,operations:$o)}',
+    {
+      f: { provider: 'FILESYSTEM', tempLocation: uploadFile.tempLocation, name, input: `${name}.audio` },
+      o: [{ name: 'SEPARATE_CUSTOM', params: { stems } }],
+    },
+  )
+  return createTask
+}
+
+/** The task's separation status, and its stem URLs once COMPLETED. */
+async function separationStatus(token, taskId) {
+  const { track } = await moisesGql(token, 'query($id:String!){track(id:$id){operations{name status files}}}', {
+    id: taskId,
+  })
+  const op = track?.operations?.find((o) => o.name === 'SEPARATE_CUSTOM')
+  if (!op) return { status: 'PENDING' } // the row exists a beat before its operation does
+  return { status: op.status, files: op.files }
+}
+
+/** Drain a ReadableStream into one Uint8Array. */
+async function collect(stream) {
+  const reader = stream.getReader()
+  const chunks = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value)
+    total += value.length
+  }
+  const out = new Uint8Array(total)
+  let at = 0
+  for (const c of chunks) {
+    out.set(c, at)
+    at += c.length
+  }
+  return out
+}
+
+/**
+ * The source track's bytes, resolved the same way `/audio` plays them — reusing the same
+ * resolver and ranged pull in-process, so nothing self-fetches. A geo-restricted URL only
+ * serves to a home address, which is exactly what the Pi upstream is, so that is the fallback.
+ */
+async function sourceBytes(env, id) {
+  try {
+    const cand = await candidate(id, 'safe')
+    return await collect(rangedBody(cand.format.url, 0, cand.head.total - 1, cand.head.ranged))
+  } catch (e) {
+    const pi = await env.UPSTREAM?.get(UPSTREAM_KEY, { type: 'json' })
+    if (!pi?.url) throw e
+    const r = await fetch(`${pi.url}/audio?v=${id}&fmt=safe`, { headers: { 'User-Agent': UA } })
+    if (!r.ok) throw new Error(`pi source ${r.status}`)
+    return new Uint8Array(await r.arrayBuffer())
+  }
+}
+
 /* -------------------------------------------------------------------- handler ----- */
 
 
@@ -418,7 +553,7 @@ export default {
 
     if (url.pathname === '/' || url.pathname === '/health')
 
-      return json({ ok: true, service: 'looptube-audio', endpoints: ['/meta?v=', '/audio?v=', '/diag?v=', '/upstream'] })
+      return json({ ok: true, service: 'looptube-audio', endpoints: ['/meta?v=', '/audio?v=', '/diag?v=', '/upstream', '/stems'] })
 
 
 
@@ -467,6 +602,39 @@ export default {
     }
 
 
+
+    // Stem separation. POST ?v starts a job (resolves the source the same way /audio does,
+    // Pi fallback and all), GET ?taskId polls it. The worker pulls the source once to hand
+    // it to Moises; the finished stems are served from Moises' CDN straight to the browser.
+    if (url.pathname === '/stems') {
+      try {
+        const token = await moisesToken(env)
+
+        if (request.method === 'POST') {
+          const body = await request.json().catch(() => null)
+          const stems = Array.isArray(body?.stems) ? body.stems : []
+          if (!stems.length || stems.length > MAX_STEMS || stems.some((s) => !VALID_STEMS.has(s)))
+            return json({ error: `stems must be 1–${MAX_STEMS} of: ${[...VALID_STEMS].join(', ')}` }, 400)
+          if (!isVideoId(body?.v)) return json({ error: 'v must be an 11-character youtube id' }, 400)
+          const bytes = await sourceBytes(env, body.v)
+          const name = String(body.name ?? body.v).replace(/[^\w-]/g, '').slice(0, 60) || 'track'
+          return json({ taskId: await startSeparation(token, bytes, name, stems) })
+        }
+
+        if (request.method === 'GET') {
+          const taskId = url.searchParams.get('taskId')
+          if (!taskId) return json({ error: 'taskId required' }, 400)
+          const { status, files } = await separationStatus(token, taskId)
+          if (status === 'COMPLETED') return json({ status, stems: files })
+          if (status === 'FAILED' || status === 'ERROR') return json({ status }, 502)
+          return json({ status })
+        }
+
+        return json({ error: 'POST to start, GET ?taskId= to poll' }, 405)
+      } catch (e) {
+        return json({ error: String(e.message ?? e) }, 502)
+      }
+    }
 
     if (!isVideoId(id)) return json({ error: 'pass ?v=<11-character youtube id>' }, 400)
 

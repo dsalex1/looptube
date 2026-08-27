@@ -142,6 +142,29 @@ the waveform falls back to a flat bed, pitch is greyed out because the iframe ca
 it, and the app says which of the two reasons applied. You can load the audio from a
 local file in settings to get the full engine back.
 
+## Stem separation
+
+The worker also splits a track into stems (vocals, bass, drums, guitars, piano, …),
+driven through Moises' own studio API on a Premium account whose credentials live only as
+worker secrets. It is metered by that subscription, so there is no per-use cost.
+
+```
+POST /stems  {"v":"<id>","stems":["vocals","drums","bass"],"name":"…"}  -> {"taskId":"…"}
+GET  /stems?taskId=<id>   -> {"status":"STARTED"} … {"status":"COMPLETED","stems":{…}}
+```
+
+The worker resolves the source the same way `/audio` does — same resolver, same Pi
+fallback for geo-restricted videos — pulls it once, and hands it to Moises. At most five
+stems per request (the residual `other` is added on top). The returned URLs are Moises'
+own CDN: public, CORS-`*`, range-serving and immutable, so the browser fetches and caches
+them directly and no stem audio passes back through the worker. Auth is an email+password
+sign-in cached as a short-lived token in KV; set it with:
+
+```
+wrangler secret put MOISES_EMAIL
+wrangler secret put MOISES_PASSWORD
+```
+
 ## Layout
 
 ```
