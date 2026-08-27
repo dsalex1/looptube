@@ -7,6 +7,7 @@ defineProps<{ hasRealAudio: boolean }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const service = ref(serviceUrl())
+const build = __BUILD__
 
 function saveService() {
   setServiceUrl(service.value)
@@ -39,6 +40,7 @@ function saveService() {
         </div>
       </section>
 
+      <p class="build">Build {{ build }}</p>
     </div>
   </div>
 </template>
@@ -105,4 +107,5 @@ input[type='url'] {
   color: #9a9a9a;
   cursor: pointer;
 }
+.build { margin: 20px 0 0; font-size: 11px; color: #5c5c5c; text-align: right; font-variant-numeric: tabular-nums; }
 </style>

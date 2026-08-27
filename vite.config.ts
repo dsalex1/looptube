@@ -1,10 +1,22 @@
 import vue from '@vitejs/plugin-vue'
+import { execSync } from 'node:child_process'
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vitest/config'
 import { VitePWA } from 'vite-plugin-pwa'
 
 // GitHub Pages serves this repo from /docs on the project path, so assets need that base
 const base = process.env.PAGES_BASE ?? '/looptube/'
+
+// a build stamp the running app can show, so "what am I on" has an answer: short commit
+// plus the day it was built. Falls back to "dev" outside a git checkout.
+const build = (() => {
+  const day = new Date().toISOString().slice(0, 10)
+  try {
+    return `${execSync('git rev-parse --short HEAD').toString().trim()} · ${day}`
+  } catch {
+    return `dev · ${day}`
+  }
+})()
 
 export default defineConfig({
   base,
@@ -47,6 +59,7 @@ export default defineConfig({
       },
     }),
   ],
+  define: { __BUILD__: JSON.stringify(build) },
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   build: { outDir: 'docs', emptyOutDir: true },
   test: { environment: 'happy-dom' },
