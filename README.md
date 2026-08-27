@@ -74,9 +74,31 @@ Retrying, backing off and stepping the chunk size down does not move that ceilin
 client checks the decoded length against the length the player reports and rejects a
 short track rather than drawing a waveform that quietly ends early.
 
-Measured over 12 videos: **7 give a real waveform, 5 are geo-restricted.** The
-geo-restricted ones skew towards major-label music, which is unfortunate for a practice
-tool — for those, load the audio from a file and everything works.
+**Choosing a different host does not help, and this was tested rather than assumed.** The
+same probe was deployed to Cloud Functions in `europe-west3` (Frankfurt), on the theory
+that a German Google IP is exactly what a `gcr=de` URL asks for:
+
+| egress | geolocates as | unrestricted video | `gcr=de` videos |
+| --- | --- | --- | --- |
+| Cloudflare Workers (IPv6) | DE | works | 403 |
+| GCP Frankfurt, IPv6 | DE | works | 403 |
+| GCP Frankfurt, IPv4 `34.96.39.171` | DE | works | 403 |
+| home connection (IPv4) | DE | works | **works** |
+
+Google's own geolocation calls the Cloud Run address `DE` and still refuses it, and
+pinning the address family changes nothing — so it is the datacenter, not the country and
+not IPv6. Google blocks its own cloud harder than Cloudflare: on the same five videos GCP
+served one and Cloudflare served four.
+
+Measured over 12 videos on Cloudflare: **7 give a real waveform, 5 are geo-restricted.**
+The geo-restricted ones skew towards major-label music, which is unfortunate for a
+practice tool — for those, load the audio from a file and everything works.
+
+The one host that would clear this is a **residential** address. `yt-dlp` pulls a track
+from a home connection in 4.5 s with no PO token at all. Running the relay on a machine at
+home behind a Cloudflare Tunnel keeps the iPad working — it still talks to a public HTTPS
+URL — while the fetch to googlevideo comes from an address Google does not refuse. Paste
+the tunnel URL under the gear icon and no code changes.
 
 ### If the proxy cannot reach a video
 
