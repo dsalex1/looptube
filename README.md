@@ -15,7 +15,9 @@ this is the same transport bolted onto YouTube instead of an uploaded track.
 - **Tempo** 0.25×–4× and **pitch** ±12 semitones, independently
 - **Level trim** with a brick-wall limiter, so quiet backing tracks come up without clipping
 - **Two views** — the video, or the waveform — swapped from the bottom-right corner
+- **Overview strip** above the transport: the whole track at a glance, tap to seek
 - **State per video** in `localStorage`, plus a shareable permalink
+- **Installable** as a PWA, and laid out for a phone as well as a desktop
 
 ## Why there is a proxy
 
@@ -135,6 +137,12 @@ npm run dev
 
 ```bash
 npm test
+```
+
+The PWA icons are generated rather than checked in as art nobody can edit:
+
+```bash
+node scripts/icons.mjs
 ```
 
 ## Deploy

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue'
 import JogStrip from '@/components/JogStrip.vue'
+import WaveformCanvas from '@/components/WaveformCanvas.vue'
 import type { Capabilities, PaneView } from '@/types'
 import { computed } from 'vue'
 
@@ -11,6 +12,11 @@ const props = defineProps<{
   duration: number
   markerAtPlayhead: boolean
   hasLoop: boolean
+  /** the whole-track strip above the transport */
+  peaks: Uint8Array
+  markers: number[]
+  loopA: number | null
+  loopB: number | null
 }>()
 
 const emit = defineEmits<{
@@ -20,6 +26,7 @@ const emit = defineEmits<{
   (e: 'setLoop', which: 'a' | 'b'): void
   (e: 'nudgeLoop', direction: -1 | 1): void
   (e: 'scaleLoop', factor: number): void
+  (e: 'seek', seconds: number): void
 }>()
 
 const tempo = defineModel<number>('tempo', { required: true })
@@ -83,6 +90,23 @@ const pitchHint = computed(() =>
       <button class="btn btn--quiet" :disabled="!hasLoop" @click="emit('clearLoop')">Clear</button>
     </div>
 
+    <!-- the whole track at a glance: tap anywhere to seek, no handles to grab -->
+    <div class="overview">
+      <WaveformCanvas
+        overview
+        :peaks="peaks"
+        :duration="duration"
+        :start="0"
+        :end="duration"
+        :markers="markers"
+        :loopA="loopA"
+        :loopB="loopB"
+        :loopActive="loopOpen"
+        :position="currentTime"
+        @seek="emit('seek', $event)"
+      />
+    </div>
+
     <!-- one line, always: elapsed | transport | remaining and the view switch -->
     <div class="primary">
       <span class="stamp">{{ stamp(currentTime) }}</span>
@@ -124,7 +148,7 @@ const pitchHint = computed(() =>
       </div>
     </div>
 
-    <!-- the dials scroll sideways rather than wrapping into ragged rows -->
+    <!-- the dials wrap onto another row rather than running off the side of a phone -->
     <div class="dials">
       <div class="dial">
         <span class="cap">Markers</span>
@@ -215,14 +239,12 @@ const pitchHint = computed(() =>
 
 .dials {
   display: flex;
-  gap: 14px;
+  flex-wrap: wrap;
+  gap: 10px 14px;
   margin-top: 9px;
   padding-top: 9px;
   border-top: 1px solid #1e1e1e;
-  overflow-x: auto;
-  scrollbar-width: none;
 }
-.dials::-webkit-scrollbar { display: none; }
 .dial { display: flex; flex-direction: column; gap: 5px; flex: 0 0 auto; }
 .dial__row { display: flex; align-items: center; gap: 4px; }
 .dial--off { opacity: 0.4; }
@@ -279,8 +301,35 @@ const pitchHint = computed(() =>
 }
 .btn--play:hover:not(:disabled) { background: #f0cb85; border-color: #f0cb85; }
 
-@media (max-width: 560px) {
-  .stamp--right { display: none; }
-  .tail { gap: 6px; }
+/* the three-column grid needs room for the transport to stay centred; below that the
+   rows wrap and centre themselves instead of pushing the view switch off the edge */
+@media (max-width: 640px) {
+  /* one line of readouts, then the transport on its own — reordering keeps the two
+     stamps and the view switch together instead of spending a row on each */
+  .primary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    row-gap: 8px;
+  }
+  /* dissolve the tail so its children order against the row itself, rather than being
+     stuck together in a box that can only be placed as a unit */
+  .tail { display: contents; }
+  .stamp { order: 1; flex: 0 0 auto; min-width: 0; }
+  .stamp--right { order: 2; margin-left: 2px; }
+  .views { order: 3; margin-left: auto; }
+  .transport { order: 4; flex: 1 1 100%; justify-content: center; }
+  .dials { justify-content: center; }
+  .overview { height: 46px; }
+}
+
+/* the readouts stay: knowing where you are matters more on a phone, not less. The dials
+   give up their padding instead, so more of them fit on a row. */
+@media (max-width: 400px) {
+  .btn { padding: 0 7px; min-width: 32px; }
+  .dials { gap: 8px 10px; }
+  .dial__row :deep(.jog) { padding-inline: 6px; gap: 4px; }
+  .stamp { font-size: 12px; }
+  .overview { height: 42px; }
 }
 </style>
