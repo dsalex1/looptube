@@ -1,6 +1,5 @@
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { computePeaks } from '@/helpers/audioPeaks'
-import { STEM_NAMES } from '@/helpers/stems'
 
 /** what a worklet is handed per call, and so how far its output trails the playhead */
 const RENDER_QUANTUM = 128
@@ -28,13 +27,18 @@ export function useAudioEngine() {
   const loopEnabled = ref(true)
 
   // --- stems --------------------------------------------------------------------------
-  // When a track has been split, the engine plays a live mix of its non-muted stems: the
-  // same single-worklet chain, just fed a buffer that is re-summed whenever a stem is
-  // toggled. The residual `other` is always in the mix, so muting nothing sounds untouched.
-  const stemNames = ref<string[]>([]) // the toggleable ones, in display order
-  const stemMuted = ref<Record<string, boolean>>({})
-  const stemPeaks = ref<Uint8Array>(new Uint8Array()) // peaks of the current mix, for the waveform
-  const stems = new Map<string, AudioBuffer>()
+  // When a track has been split, the worklet is handed every stem and a gain per stem and
+  // blends them itself, so a fader moves in real time — no re-mixing on this side, just a
+  // new gain vector down the wire, and the one shifter still does tempo and pitch on the
+  // blend. The waveform is the same blend, approximated from per-stem peaks so it tracks
+  // the faders without keeping the samples around after they are handed off.
+  const STEM_ORDER = ['vocals', 'guitars', 'bass', 'drums', 'other'] // display + channel order
+  const stemNames = ref<string[]>([]) // the stems present, in display order
+  const stemVolume = ref<Record<string, number>>({}) // 0..1 per stem
+  const stemPeaks = ref<Uint8Array>(new Uint8Array()) // peaks of the current blend, for the waveform
+  const stemBuffers = new Map<string, AudioBuffer>() // spent once handed to the worklet
+  const stemPeaksPer = new Map<string, Uint8Array>() // kept, so the waveform can be re-weighted
+  const stemPrevVolume = new Map<string, number>() // what a stem returns to when un-muted
   const hasStems = () => stemNames.value.length > 0
 
   let context: AudioContext | null = null
@@ -130,69 +134,80 @@ export function useAudioEngine() {
   }
 
   function clearStems() {
-    stems.clear()
+    stemBuffers.clear()
+    stemPeaksPer.clear()
+    stemPrevVolume.clear()
     stemNames.value = []
-    stemMuted.value = {}
+    stemVolume.value = {}
     stemPeaks.value = new Uint8Array()
   }
 
-  /** A fresh stereo buffer summing every non-muted stem, plus the always-on `other` bed. */
-  function buildMix(): AudioBuffer | null {
-    if (!stems.size) return null
-    const ctx = audioContext()
-    const active = [...stems.entries()].filter(([name]) => name === 'other' || !stemMuted.value[name])
-    const length = Math.max(...[...stems.values()].map((b) => b.length))
-    const mix = ctx.createBuffer(2, length, ctx.sampleRate)
-    for (let ch = 0; ch < 2; ch++) {
-      const out = mix.getChannelData(ch)
-      for (const [, buf] of active) {
-        const src = buf.getChannelData(Math.min(ch, buf.numberOfChannels - 1))
-        for (let i = 0; i < src.length; i++) out[i] += src[i]
-      }
+  const gainVector = () => stemNames.value.map((n) => stemVolume.value[n] ?? 1)
+
+  /** The waveform for the current fader positions: per-stem peaks summed by their gains. */
+  function recomputeStemPeaks() {
+    const names = stemNames.value
+    if (!names.length) return (stemPeaks.value = new Uint8Array())
+    const len = names.reduce((m, n) => Math.max(m, stemPeaksPer.get(n)?.length ?? 0), 0)
+    const out = new Uint8Array(len)
+    for (let i = 0; i < len; i++) {
+      let sum = 0
+      for (const n of names) sum += (stemVolume.value[n] ?? 1) * (stemPeaksPer.get(n)?.[i] ?? 0)
+      out[i] = Math.min(255, Math.round(sum))
     }
-    return mix
+    stemPeaks.value = out
   }
 
-  /**
-   * Rebuild the playing buffer from the current mute state, holding the playhead where it
-   * is. The peaks are read off the mix before its channels are transferred to the worklet,
-   * so the waveform tracks exactly what is audible.
-   */
-  async function applyStemMix() {
-    const at = currentTime.value
-    const wasPlaying = playing.value
-    const mix = buildMix()
-    if (!mix) return
-    stemPeaks.value = computePeaks(mix)
-    teardownShifter() // drops the old worklet; a new one is built from the new mix below
-    buffer = mix
-    duration.value = mix.duration
-    currentTime.value = Math.min(at, mix.duration)
-    if (wasPlaying) await play()
-  }
-
-  /** Adopt a freshly separated set of stems (raw bytes per stem) and start playing the mix. */
+  /** Adopt a freshly separated set of stems (raw bytes per stem) and start playing the blend. */
   async function setStems(bytesByStem: Record<string, ArrayBuffer>) {
     const ctx = audioContext()
     const decoded = await Promise.all(
       Object.entries(bytesByStem).map(async ([name, bytes]) => [name, await ctx.decodeAudioData(bytes)] as const)
     )
-    stems.clear()
-    for (const [name, buf] of decoded) stems.set(name, buf)
-    stemNames.value = STEM_NAMES.filter((n) => stems.has(n))
-    stemMuted.value = Object.fromEntries(stemNames.value.map((n) => [n, false]))
-    await applyStemMix()
+    clearStems()
+    for (const [name, buf] of decoded) {
+      stemBuffers.set(name, buf)
+      stemPeaksPer.set(name, computePeaks(buf))
+    }
+    stemNames.value = STEM_ORDER.filter((n) => stemBuffers.has(n))
+    stemVolume.value = Object.fromEntries(stemNames.value.map((n) => [n, 1]))
+    recomputeStemPeaks()
+
+    // switch playback from the whole-track buffer to the stem blend, holding the playhead
+    const at = currentTime.value
+    const wasPlaying = playing.value
+    teardownShifter()
+    buffer = null // the blend comes from the stems now, not the single buffer
+    duration.value = decoded[0][1].duration
+    currentTime.value = Math.min(at, duration.value)
+    if (wasPlaying) await play()
   }
 
-  function toggleStem(name: string) {
-    if (!stems.has(name)) return
-    stemMuted.value = { ...stemMuted.value, [name]: !stemMuted.value[name] }
-    void applyStemMix()
+  /** Set one stem's level, 0..1. Live: the worklet gets the new gains, the waveform re-weights. */
+  function setStemVolume(name: string, value: number) {
+    if (!stemPeaksPer.has(name)) return
+    stemVolume.value = { ...stemVolume.value, [name]: Math.max(0, Math.min(1, value)) }
+    shifter?.port.postMessage({ gains: gainVector() })
+    recomputeStemPeaks()
   }
+
+  /** Icon click: drop a stem to silence, or bring it back to where its fader was. */
+  function toggleStemMute(name: string) {
+    const current = stemVolume.value[name] ?? 1
+    if (current > 0) {
+      stemPrevVolume.set(name, current)
+      setStemVolume(name, 0)
+    } else {
+      setStemVolume(name, stemPrevVolume.get(name) ?? 1)
+    }
+  }
+
+  const asStereo = (b: AudioBuffer) => [b.getChannelData(0), b.getChannelData(b.numberOfChannels > 1 ? 1 : 0)]
 
   /**
-   * The whole track is handed to the worklet once, transferred rather than copied so a
-   * long recording is never held twice; `buffer` is spent afterwards and dropped.
+   * The track is handed to the worklet once, transferred rather than copied so a long
+   * recording is never held twice; the source is spent afterwards and dropped. A split
+   * track sends every stem plus its gains; a plain one sends its two channels.
    */
   async function createShifter(token: number) {
     const ctx = audioContext()
@@ -204,7 +219,7 @@ export function useAudioEngine() {
       error.value = 'Could not start audio - needs https and a 2021 or newer browser'
       return null
     }
-    if (token !== loadToken || !buffer) return null
+    if (token !== loadToken || (!buffer && !stemBuffers.size)) return null
 
     const node = new AudioWorkletNode(ctx, 'soundtouch-processor', {
       numberOfInputs: 0,
@@ -213,19 +228,26 @@ export function useAudioEngine() {
     })
     node.port.onmessage = ({ data }) => data.ended && pause()
 
-    const channels = [buffer.getChannelData(0), buffer.getChannelData(buffer.numberOfChannels > 1 ? 1 : 0)]
-    node.port.postMessage(
-      { channels, startFrame: Math.round(currentTime.value * ctx.sampleRate) },
-      [...new Set(channels.map((c) => c.buffer))] // mono hands us the same channel twice
-    )
-    buffer = null
+    const startFrame = Math.round(currentTime.value * ctx.sampleRate)
+    if (stemBuffers.size) {
+      const stems = stemNames.value.map((n) => asStereo(stemBuffers.get(n)!))
+      node.port.postMessage(
+        { stems, gains: gainVector(), startFrame },
+        [...new Set(stems.flat().map((c) => c.buffer))]
+      )
+      stemBuffers.clear() // channels are transferred; the peaks copy is what survives
+    } else {
+      const channels = asStereo(buffer!)
+      node.port.postMessage({ channels, startFrame }, [...new Set(channels.map((c) => c.buffer))])
+      buffer = null
+    }
     shifter = node
     return node
   }
 
   function ensureShifter() {
     if (shifter) return Promise.resolve(shifter)
-    if (!buffer) return Promise.resolve(null)
+    if (!buffer && !stemBuffers.size) return Promise.resolve(null)
     return (shifterPending ??= createShifter(loadToken).then((node) => {
       if (!node) shifterPending = null // so a later play can try again
       return node
@@ -345,6 +367,6 @@ export function useAudioEngine() {
   return {
     currentTime, duration, playing, loading, error, tempo, pitch, gainDb,
     loopA, loopB, loopEnabled, limiterCeilingDb, load, play, pause, toggle, seek, skip, levels,
-    stemNames, stemMuted, stemPeaks, hasStems, setStems, toggleStem, clearStems,
+    stemNames, stemVolume, stemPeaks, hasStems, setStems, setStemVolume, toggleStemMute, clearStems,
   }
 }

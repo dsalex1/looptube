@@ -13,24 +13,39 @@ import { SimpleFilter, SoundTouch } from 'soundtouchjs'
  * Only the node wrapper is replaced here - the filtering below is soundtouchjs's own.
  */
 
-/** the shape SimpleFilter pulls its input through, minus the AudioBuffer we cannot have here */
-class ChannelSource {
-  constructor(channels) {
-    this.channels = channels
-    this.length = channels[0].length
+/**
+ * The shape SimpleFilter pulls its input through. It holds every stem and a gain per
+ * stem, and sums them as it is read: that is what lets a fader move in real time without
+ * re-mixing anything on the main thread, since the gains are just a message away and the
+ * one shifter downstream still does tempo and pitch on the blend. A plain track is simply
+ * the one-stem case.
+ */
+class StemSource {
+  constructor(stems, gains) {
+    this.stems = stems // [{ left, right, length }]
+    this.gains = gains // Float32Array, one per stem
+    this.length = stems.reduce((m, s) => Math.max(m, s.length), 0)
   }
 
   extract(target, numFrames, position) {
-    const left = this.channels[0]
-    const right = this.channels[1] || this.channels[0]
     const available = Math.max(0, Math.min(numFrames, this.length - position))
-    for (let i = 0; i < available; i++) {
-      target[i * 2] = left[position + i]
-      target[i * 2 + 1] = right[position + i]
+    for (let i = 0; i < available * 2; i++) target[i] = 0 // we accumulate, so start silent
+    for (let s = 0; s < this.stems.length; s++) {
+      const g = this.gains[s]
+      if (!g) continue
+      const { left, right, length } = this.stems[s]
+      for (let i = 0; i < available; i++) {
+        const p = position + i
+        if (p >= length) break
+        target[i * 2] += g * left[p]
+        target[i * 2 + 1] += g * right[p]
+      }
     }
     return available
   }
 }
+
+const toStem = ([left, right]) => ({ left, right: right || left, length: left.length })
 
 class SoundTouchProcessor extends AudioWorkletProcessor {
   constructor({ processorOptions }) {
@@ -39,6 +54,7 @@ class SoundTouchProcessor extends AudioWorkletProcessor {
     this.pipe.tempo = processorOptions.tempo
     this.pipe.pitchSemitones = processorOptions.pitch
     this.filter = null
+    this.source = null
     // the track is handed over separately, so its channels can be transferred rather than copied
     this.playing = false
     this.ended = false
@@ -46,11 +62,19 @@ class SoundTouchProcessor extends AudioWorkletProcessor {
     this.port.onmessage = ({ data }) => this.receive(data)
   }
 
+  start(stems, gains, startFrame) {
+    this.source = new StemSource(stems, gains)
+    this.filter = new SimpleFilter(this.source, this.pipe)
+    this.filter.sourcePosition = startFrame
+    this.ended = false
+  }
+
   receive(data) {
-    if (data.channels) {
-      this.filter = new SimpleFilter(new ChannelSource(data.channels), this.pipe)
-      this.filter.sourcePosition = data.startFrame
-    }
+    // a plain track arrives as its two channels; a split one as an array of stems + gains
+    if (data.channels) this.start([toStem(data.channels)], new Float32Array([1]), data.startFrame)
+    if (data.stems) this.start(data.stems.map(toStem), Float32Array.from(data.gains), data.startFrame)
+    // a fader move is just new gains — no re-mix, the next extract picks them up
+    if (data.gains && this.source && !data.stems) this.source.gains = Float32Array.from(data.gains)
     if (data.tempo !== undefined) this.pipe.tempo = data.tempo
     if (data.pitch !== undefined) this.pipe.pitchSemitones = data.pitch
     if (data.playing !== undefined) this.playing = data.playing

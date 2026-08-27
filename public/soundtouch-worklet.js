@@ -622,22 +622,30 @@
   };
 
   // src/audio/soundtouchWorklet.js
-  var ChannelSource = class {
-    constructor(channels) {
-      this.channels = channels;
-      this.length = channels[0].length;
+  var StemSource = class {
+    constructor(stems, gains) {
+      this.stems = stems;
+      this.gains = gains;
+      this.length = stems.reduce((m, s) => Math.max(m, s.length), 0);
     }
     extract(target, numFrames, position) {
-      const left = this.channels[0];
-      const right = this.channels[1] || this.channels[0];
       const available = Math.max(0, Math.min(numFrames, this.length - position));
-      for (let i = 0; i < available; i++) {
-        target[i * 2] = left[position + i];
-        target[i * 2 + 1] = right[position + i];
+      for (let i = 0; i < available * 2; i++) target[i] = 0;
+      for (let s = 0; s < this.stems.length; s++) {
+        const g = this.gains[s];
+        if (!g) continue;
+        const { left, right, length } = this.stems[s];
+        for (let i = 0; i < available; i++) {
+          const p = position + i;
+          if (p >= length) break;
+          target[i * 2] += g * left[p];
+          target[i * 2 + 1] += g * right[p];
+        }
       }
       return available;
     }
   };
+  var toStem = ([left, right]) => ({ left, right: right || left, length: left.length });
   var SoundTouchProcessor = class extends AudioWorkletProcessor {
     constructor({ processorOptions }) {
       super();
@@ -645,16 +653,22 @@
       this.pipe.tempo = processorOptions.tempo;
       this.pipe.pitchSemitones = processorOptions.pitch;
       this.filter = null;
+      this.source = null;
       this.playing = false;
       this.ended = false;
       this.interleaved = new Float32Array(128 * 2);
       this.port.onmessage = ({ data }) => this.receive(data);
     }
+    start(stems, gains, startFrame) {
+      this.source = new StemSource(stems, gains);
+      this.filter = new SimpleFilter(this.source, this.pipe);
+      this.filter.sourcePosition = startFrame;
+      this.ended = false;
+    }
     receive(data) {
-      if (data.channels) {
-        this.filter = new SimpleFilter(new ChannelSource(data.channels), this.pipe);
-        this.filter.sourcePosition = data.startFrame;
-      }
+      if (data.channels) this.start([toStem(data.channels)], new Float32Array([1]), data.startFrame);
+      if (data.stems) this.start(data.stems.map(toStem), Float32Array.from(data.gains), data.startFrame);
+      if (data.gains && this.source && !data.stems) this.source.gains = Float32Array.from(data.gains);
       if (data.tempo !== void 0) this.pipe.tempo = data.tempo;
       if (data.pitch !== void 0) this.pipe.pitchSemitones = data.pitch;
       if (data.playing !== void 0) this.playing = data.playing;

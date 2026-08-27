@@ -5,7 +5,7 @@ import RecentGrid from '@/components/RecentGrid.vue'
 import Settings from '@/components/Settings.vue'
 import Stage from '@/components/Stage.vue'
 import StartPage from '@/components/StartPage.vue'
-import StemBar from '@/components/StemBar.vue'
+import StemMixer from '@/components/StemMixer.vue'
 import { separate, type StemPhase } from '@/helpers/stems'
 import { useAudioEngine } from '@/composables/useAudioEngine'
 import { useYouTubePlayer } from '@/composables/useYouTubePlayer'
@@ -85,7 +85,7 @@ const gainDb = proxy('gainDb')
 // --- stems: once real audio is playing, split it and offer the parts as mute toggles ----
 const stemPhase = ref<StemPhase | ''>('')
 const stemNames = computed(() => engine.stemNames.value)
-const stemMuted = computed(() => engine.stemMuted.value)
+const stemVolume = computed(() => engine.stemVolume.value)
 let stemController: AbortController | null = null
 
 function resetStems() {
@@ -478,12 +478,13 @@ const shownStatus = computed(() => error.value || status.value)
       @zoom="zoom"
     />
 
-    <StemBar
+    <StemMixer
       v-if="id && useEngine"
       :names="stemNames"
-      :muted="stemMuted"
+      :volume="stemVolume"
       :phase="stemPhase"
-      @toggle="engine.toggleStem"
+      @setVolume="engine.setStemVolume"
+      @mute="engine.toggleStemMute"
     />
 
     <StartPage

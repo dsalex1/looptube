@@ -14,6 +14,10 @@ const PATHS: Record<string, string> = {
   gear: 'M12 8a4 4 0 100 8 4 4 0 000-8zm9 4l2 2-2 4-3-1-2 1-1 3h-4l-1-3-2-1-3 1-2-4 2-2-2-2 2-4 3 1 2-1 1-3h4l1 3 2 1 3-1 2 4z',
   close: 'M6 6l12 12M18 6L6 18',
   clock: 'M12 3a9 9 0 100 18 9 9 0 000-18zm0 4v5l3.5 2',
+  mic: 'M12 2a3 3 0 013 3v6a3 3 0 01-6 0V5a3 3 0 013-3zM6 11a6 6 0 0012 0M12 17v4',
+  guitar: 'M14 4l6 6M20 4l-8 8a3 3 0 11-2-2zM12.5 5.5l1.5 1.5M15.5 4l1.5 1.5',
+  drum: 'M4 9c0-2.2 3.6-4 8-4s8 1.8 8 4-3.6 4-8 4-8-1.8-8-4zM4 9v6c0 2.2 3.6 4 8 4s8-1.8 8-4V9',
+  note: 'M9 18V6l11-2v10M9 18a2 2 0 11-4 0 2 2 0 014 0zm11-2a2 2 0 11-4 0 2 2 0 014 0z',
 }
 defineProps<{ name: keyof typeof PATHS | string; stroke?: boolean }>()
 </script>

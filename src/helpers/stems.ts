@@ -19,6 +19,39 @@ export type StemName = (typeof STEM_NAMES)[number]
 const POLL_MS = 2500
 const POLL_TIMEOUT_MS = 5 * 60_000
 
+// The slow part is the separation, not the download, and Moises' stem URLs are immutable,
+// so once a video is split its URLs are remembered per id. A stale URL (rare) just 404s on
+// download, which drops the entry and re-splits — so the cache never wedges a video.
+const CACHE_KEY = 'looptube:stems'
+type StemUrls = Record<string, string>
+type Cache = Record<string, { stems: StemUrls; at: number }>
+
+const readCache = (): Cache => {
+  try {
+    return JSON.parse(localStorage.getItem(CACHE_KEY) ?? '{}')
+  } catch {
+    return {}
+  }
+}
+const cachedStems = (id: string): StemUrls | null => readCache()[id]?.stems ?? null
+function rememberStems(id: string, stems: StemUrls) {
+  const cache = readCache()
+  cache[id] = { stems, at: Date.now() }
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(cache))
+  } catch {
+    /* storage full or blocked: the split still works, it just will not be remembered */
+  }
+}
+function forgetStems(id: string) {
+  const cache = readCache()
+  delete cache[id]
+  localStorage.setItem(CACHE_KEY, JSON.stringify(cache))
+}
+
+/** True when this video's stems are already known, so opening it will not re-split. */
+export const stemsCached = (id: string) => cachedStems(id) != null
+
 const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((res, rej) => {
     const t = setTimeout(res, ms)
@@ -54,17 +87,7 @@ async function poll(base: string, taskId: string, signal?: AbortSignal): Promise
  * reports progress so the toggles can show "Separating…" then "Downloading…". Rejects on
  * abort, so a caller that has moved to another video can drop the result.
  */
-export async function separate(
-  id: string,
-  name: string,
-  onPhase?: (phase: StemPhase) => void,
-  signal?: AbortSignal
-): Promise<Record<string, ArrayBuffer>> {
-  const base = serviceUrl()
-  onPhase?.('separating')
-  const stems = await poll(base, await post(base, id, name, signal), signal)
-
-  onPhase?.('downloading')
+async function download(stems: StemUrls, signal?: AbortSignal): Promise<Record<string, ArrayBuffer>> {
   const entries = await Promise.all(
     Object.entries(stems).map(async ([stem, url]) => {
       const r = await fetch(url, { signal })
@@ -72,6 +95,32 @@ export async function separate(
       return [stem, await r.arrayBuffer()] as const
     })
   )
-  onPhase?.('ready')
   return Object.fromEntries(entries)
+}
+
+export async function separate(
+  id: string,
+  name: string,
+  onPhase?: (phase: StemPhase) => void,
+  signal?: AbortSignal
+): Promise<Record<string, ArrayBuffer>> {
+  const base = serviceUrl()
+  const known = cachedStems(id)
+  let stems = known
+  if (!stems) {
+    onPhase?.('separating')
+    stems = await poll(base, await post(base, id, name, signal), signal)
+    rememberStems(id, stems)
+  }
+
+  onPhase?.('downloading')
+  try {
+    const bytes = await download(stems, signal)
+    onPhase?.('ready')
+    return bytes
+  } catch (e) {
+    if (signal?.aborted || !known) throw e
+    forgetStems(id) // a remembered URL went stale; split again from scratch
+    return separate(id, name, onPhase, signal)
+  }
 }
