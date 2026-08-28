@@ -200,18 +200,6 @@ const pitchHint = computed(() =>
     <!-- the dials wrap onto another row rather than running off the side of a phone -->
     <div class="dials">
       <div class="dial">
-        <span class="cap">View</span>
-        <div class="dial__row">
-          <button class="btn" :class="{ 'btn--on': view === 'video' }" title="Video" @click="view = 'video'">
-            <Icon name="video" />
-          </button>
-          <button class="btn" :class="{ 'btn--on': view === 'waveform' }" title="Waveform" @click="view = 'waveform'">
-            <Icon name="wave" stroke />
-          </button>
-        </div>
-      </div>
-
-      <div class="dial">
         <span class="cap">Markers</span>
         <div class="dial__row">
           <button class="btn" aria-label="Previous marker" @click="emit('jumpMarker', -1)"><Icon name="prev" /></button>
@@ -276,6 +264,18 @@ const pitchHint = computed(() =>
           </button>
         </div>
       </div>
+
+      <div class="dial">
+        <span class="cap">View</span>
+        <div class="dial__row">
+          <button class="btn" :class="{ 'btn--on': view === 'video' }" title="Video" @click="view = 'video'">
+            <Icon name="video" />
+          </button>
+          <button class="btn" :class="{ 'btn--on': view === 'waveform' }" title="Waveform" @click="view = 'waveform'">
+            <Icon name="wave" stroke />
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -301,6 +301,7 @@ const pitchHint = computed(() =>
 .dials {
   display: flex;
   flex-wrap: wrap;
+  justify-content: space-between;
   gap: 10px 14px;
   margin-top: 9px;
   padding-top: 9px;
@@ -360,6 +361,8 @@ const pitchHint = computed(() =>
   text-transform: uppercase;
   color: #6b6b6b;
 }
+
+.overview { height: 56px; }
 
 .loopbar {
   display: flex;

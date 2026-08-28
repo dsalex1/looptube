@@ -92,10 +92,13 @@ const percent = computed(() => `${Math.round((props.progress ?? 0) * 100)}%`)
 </template>
 
 <style scoped>
-.stage { position: relative; flex: 1 1 0; min-height: 0; background: #050505; }
+/* a floor, so a tall bar can squeeze the picture but never squeeze it away */
+.stage { position: relative; flex: 1 1 0; min-height: 160px; background: #050505; }
 .video, .wave { position: absolute; inset: 0; }
-.video { display: flex; align-items: center; justify-content: center; }
-.video__frame { width: 100%; max-height: 100%; aspect-ratio: 16 / 9; }
+.video { display: flex; align-items: center; justify-content: center; container-type: size; }
+/* whichever of the two the pane runs out of first decides the size, so the picture is
+   always as large as it can be without ever being stretched out of shape */
+.video__frame { aspect-ratio: 16 / 9; width: min(100cqw, calc(100cqh * 16 / 9)); }
 .video__frame :deep(iframe) { width: 100%; height: 100%; border: 0; display: block; }
 .hint {
   position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);

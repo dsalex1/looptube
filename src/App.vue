@@ -558,7 +558,9 @@ const shownStatus = computed(() => error.value || status.value)
   border-bottom: 1px solid #242424;
 }
 .brand { display: flex; align-items: center; gap: 7px; color: #e8bd6d; font-weight: 600; font-size: 14px; }
-.find { display: flex; gap: 6px; flex: 1 1 260px; max-width: 460px; }
+/* min-width:0 or the form refuses to shrink past its basis and shoves the last
+   buttons off the side of a phone */
+.find { display: flex; gap: 6px; flex: 1 1 260px; min-width: 0; max-width: 460px; }
 .find input {
   flex: 1;
   min-width: 0;
