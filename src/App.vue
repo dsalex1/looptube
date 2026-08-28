@@ -12,6 +12,7 @@ import { useYouTubePlayer } from '@/composables/useYouTubePlayer'
 import { cachedIds } from '@/helpers/audioCache'
 import { fromFile, fromService, synthetic, type PeaksResult } from '@/helpers/peaksSource'
 import { forget, recents, remember, type Recent } from '@/helpers/recents'
+import { DRIFT, RESYNC_COOLDOWN } from '@/helpers/videoSync'
 import { emptyState, fromHash, load as loadState, save as saveState, toHash } from '@/helpers/persist'
 import { videoId } from '@/helpers/youtube'
 import type { LoopState, PaneView, Transport } from '@/types'
@@ -22,7 +23,6 @@ const SNAP = 1 // A/B snaps to a marker this close
 const MARKER_HIT = 0.3 // pressing the marker button this close to one removes it instead
 const DEFAULT_SPAN = 30 // seconds visible in the zoomed view
 const NUDGE = 0.025 // seconds a single arrow press moves a loop point
-const DRIFT = 0.35 // how far the muted video may wander from the audio before it is pulled back
 
 const id = ref('')
 const title = ref('')
@@ -64,7 +64,7 @@ const engine = useAudioEngine()
 // The engine is vendored from asla, which had only ever one backend and so says nothing
 // about what it can do. With the whole track decoded it can do everything.
 const engineTransport = Object.assign(engine, {
-  can: { pitch: true, boost: true, tempoSteps: null },
+  can: { pitch: true, boost: true, tempoMin: 0.25, tempoMax: 4 },
 }) as unknown as Transport
 
 /** Real audio beats the iframe: it is the only way to get pitch shifting and a boost. */
@@ -336,9 +336,18 @@ watch(playing, (on) => {
   else yt.pause()
 })
 
+/**
+ * The picture chases the sound. With the player taking the engine's exact tempo this is
+ * only ever a nudge, and above 2x — where the player runs out of rate and cannot help
+ * falling behind — the cooldown keeps it from stuttering continuously as it tries.
+ */
+let lastResync = 0
 watch(currentTime, (at) => {
   if (!useEngine.value || !yt.playing.value) return
-  if (Math.abs(yt.currentTime.value - at) > DRIFT) yt.seek(at)
+  if (Math.abs(yt.currentTime.value - at) <= DRIFT) return
+  if (performance.now() - lastResync < RESYNC_COOLDOWN * 1000) return
+  lastResync = performance.now()
+  yt.seek(at)
 })
 
 watch(tempo, (v) => useEngine.value && (yt.tempo.value = v))

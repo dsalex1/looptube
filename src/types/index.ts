@@ -30,8 +30,9 @@ export interface Capabilities {
   pitch: boolean
   /** boost above unity; YouTube's volume only attenuates */
   boost: boolean
-  /** the only rates YouTube accepts, or null when tempo is continuous */
-  tempoSteps: number[] | null
+  /** the range of playback rates this source can hold; the controls stop at the ends */
+  tempoMin: number
+  tempoMax: number
 }
 
 /** Everything worth keeping about one video, keyed by its id. */

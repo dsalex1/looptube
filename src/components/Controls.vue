@@ -45,24 +45,12 @@ const stamp = (seconds: number) => {
   return `${Math.floor(safe / 60)}:${String(Math.floor(safe % 60)).padStart(2, '0')}.${tenths}`
 }
 
-// YouTube accepts only a fixed ladder of rates, so the jog lands on the nearest rung
-// instead of sliding through values the player would silently ignore
-const steps = computed(() => props.can.tempoSteps)
-const tempoRange = computed(() => {
-  const ladder = steps.value
-  return ladder ? { step: 0.25, min: ladder[0], max: ladder[ladder.length - 1] } : { step: 0.01, min: 0.25, max: 4 }
-})
+// both sources take a continuous rate; they just reach different distances
+const tempoRange = computed(() => ({ step: 0.01, min: props.can.tempoMin, max: props.can.tempoMax }))
 
-function adjustTempo(delta: number) {
-  const ladder = steps.value
-  if (!ladder) {
-    tempo.value = Math.round(Math.max(0.25, Math.min(4, tempo.value + delta)) * 100) / 100
-    return
-  }
-  const nearest = ladder.reduce((b, r) => (Math.abs(r - tempo.value) < Math.abs(b - tempo.value) ? r : b), ladder[0])
-  const i = ladder.indexOf(nearest)
-  tempo.value = ladder[Math.max(0, Math.min(ladder.length - 1, i + Math.sign(delta)))]
-}
+const adjustTempo = (delta: number) =>
+  (tempo.value =
+    Math.round(Math.max(props.can.tempoMin, Math.min(props.can.tempoMax, tempo.value + delta)) * 100) / 100)
 
 const adjustPitch = (d: number) => (pitch.value = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, Math.round(pitch.value) + d)))
 const adjustGain = (d: number) =>

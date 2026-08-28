@@ -1,11 +1,7 @@
+import { clampRate, YT_RATE_MAX, YT_RATE_MIN } from '@/helpers/videoSync'
 import { loadIframeApi } from '@/helpers/youtube'
 import type { Transport } from '@/types'
 import { onUnmounted, ref, watch } from 'vue'
-
-/** YouTube only accepts these rates; anything else is silently ignored. */
-const RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
-
-const nearestRate = (v: number) => RATES.reduce((best, r) => (Math.abs(r - v) < Math.abs(best - v) ? r : best), 1)
 
 /**
  * The YouTube player wearing the same face as the Web Audio engine, so one set of
@@ -78,7 +74,7 @@ export function useYouTubePlayer(host: () => HTMLElement | undefined): Transport
         onReady: (e) => {
           loading.value = false
           duration.value = e.target.getDuration()
-          e.target.setPlaybackRate(nearestRate(tempo.value))
+          e.target.setPlaybackRate(clampRate(tempo.value))
           e.target.setVolume(volumeOf(gainDb.value))
         },
         onStateChange: (e) => {
@@ -116,7 +112,7 @@ export function useYouTubePlayer(host: () => HTMLElement | undefined): Transport
 
   const skip = (seconds: number) => seek(currentTime.value + seconds)
 
-  watch(tempo, (v) => player?.setPlaybackRate(nearestRate(v)))
+  watch(tempo, (v) => player?.setPlaybackRate(clampRate(v)))
   watch(gainDb, (v) => player?.setVolume(volumeOf(v)))
 
   onUnmounted(() => {
@@ -128,6 +124,6 @@ export function useYouTubePlayer(host: () => HTMLElement | undefined): Transport
   return {
     currentTime, duration, playing, loading, error, tempo, pitch, gainDb,
     loopA, loopB, loopEnabled, play, pause, toggle, seek, skip, mount,
-    can: { pitch: false, boost: false, tempoSteps: RATES },
+    can: { pitch: false, boost: false, tempoMin: YT_RATE_MIN, tempoMax: YT_RATE_MAX },
   }
 }
