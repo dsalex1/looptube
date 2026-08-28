@@ -1,0 +1,62 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>YouTube rate probe</title>
+<style>
+  body { background: #111; color: #ddd; font: 13px/1.6 ui-monospace, monospace; padding: 16px; }
+  .bad { color: #ff6b6b; }
+  .ok { color: #6bdc84; }
+</style>
+<!-- Does the iframe player accept a rate that is not on its advertised ladder? The whole
+     video-follow strategy turns on the answer, so it is asked rather than assumed. -->
+<button id="run">run</button>
+<div id="host"></div>
+<pre id="out"></pre>
+<script>
+  const out = document.getElementById('out')
+  const say = (s) => (out.innerHTML += s + '\n')
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+
+  let player
+  window.onYouTubeIframeAPIReady = () => {
+    player = new YT.Player('host', {
+      height: 180,
+      width: 320,
+      videoId: new URLSearchParams(location.search).get('v') ?? 'aqz-KE-bpKQ',
+      playerVars: { controls: 0, playsinline: 1 },
+      events: { onReady: () => say('ready') },
+    })
+  }
+
+  async function run() {
+    out.innerHTML = ''
+    player.mute()
+    player.playVideo()
+    await wait(2000)
+    say('advertised: ' + JSON.stringify(player.getAvailablePlaybackRates()))
+
+    const results = []
+    for (const rate of [1, 1.15, 1.4, 1.85, 2.5, 3]) {
+      player.setPlaybackRate(rate)
+      await wait(400)
+      const got = player.getPlaybackRate()
+      // what it reports and what it does can differ, so time the playhead as well
+      const from = player.getCurrentTime()
+      const wallFrom = performance.now()
+      await wait(2000)
+      const measured = (player.getCurrentTime() - from) / ((performance.now() - wallFrom) / 1000)
+      results.push({ asked: rate, reported: got, measured: +measured.toFixed(3) })
+      say(
+        `asked ${rate} -> reported ${got}, actually ran at <span class="${
+          Math.abs(measured - rate) < 0.05 ? 'ok' : 'bad'
+        }">${measured.toFixed(3)}x</span>`
+      )
+    }
+    player.pauseVideo()
+    window.__rateReport = results
+  }
+
+  document.getElementById('run').addEventListener('click', run)
+  const tag = document.createElement('script')
+  tag.src = 'https://www.youtube.com/iframe_api'
+  document.head.append(tag)
+</script>

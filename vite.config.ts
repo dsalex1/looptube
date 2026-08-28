@@ -46,6 +46,7 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,png,svg,woff2}'],
+        globIgnores: ['**/__test-*'], // the sync harness is not part of the app
         // the player and the audio relay are both cross-origin and must stay live; only
         // the shell is worth precaching
         navigateFallbackDenylist: [/^\/looptube\/(audio|meta)/],
