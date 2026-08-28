@@ -81,8 +81,8 @@ function onWheel(e: WheelEvent) {
 
 <style scoped>
 .jog {
-  /* the dotted ruler the value is dragged along */
-  --dot: #565656;
+  /* the ruler the value is dragged along */
+  --tick: #4a4a4a;
   flex: 0 0 auto;
   height: 34px;
   display: flex;
@@ -92,8 +92,13 @@ function onWheel(e: WheelEvent) {
   padding-inline: 10px;
   border-radius: 6px;
   background-color: #191919;
-  background-image: radial-gradient(circle, var(--dot) 1px, transparent 1px);
-  background-size: 6px 6px;
+  /* a ruler along the bottom edge, clear of the value. Running the ticks behind the text
+     instead — as a full field of dots used to — leaves slivers showing either side of it,
+     which read as a speckled border rather than as a scale */
+  background-image: repeating-linear-gradient(90deg, var(--tick) 0 1px, transparent 1px 7px);
+  background-size: 100% 4px;
+  background-position: bottom;
+  background-repeat: no-repeat;
   border: 1px solid #333;
   cursor: ew-resize;
   touch-action: none;
@@ -102,20 +107,13 @@ function onWheel(e: WheelEvent) {
   white-space: nowrap;
 }
 .jog.dragging {
-  --dot: #f59e0b;
+  --tick: #f59e0b;
 }
+/* nothing runs behind these any more, so they need no plate of their own */
 .jog__label {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   color: #f2f2f2;
-  background: #191919;
-  padding-inline: 7px;
-  border-radius: 3px;
 }
-.jog__sub {
-  color: #9a9a9a;
-  background: #191919;
-  padding-inline: 5px;
-  border-radius: 3px;
-}
+.jog__sub { color: #9a9a9a; }
 </style>
