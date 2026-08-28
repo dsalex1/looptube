@@ -12,8 +12,6 @@ const emit = defineEmits<{
   (e: 'file', file: File): void
 }>()
 
-const build = __BUILD__
-
 const raw = ref('')
 const picker = ref<HTMLInputElement>()
 const dragging = ref(false)
@@ -40,7 +38,6 @@ function onDrop(e: DragEvent) {
   >
     <div class="hero">
       <Icon name="wave" stroke />
-      <p class="version">{{ build }}</p>
       <h1>Loop any YouTube video</h1>
       <p>A–B repeat, markers, tempo and pitch, against a real waveform.</p>
 
@@ -99,7 +96,6 @@ function onDrop(e: DragEvent) {
 .hero > svg { width: 42px; height: 42px; color: #f59e0b; }
 h1 { margin: 0; font-size: 22px; font-weight: 600; color: #f0f0f0; }
 .hero p { margin: 0; font-size: 14px; line-height: 1.5; color: #8a8a8a; }
-.version { font-size: 11px; color: #5c5c5c; font-variant-numeric: tabular-nums; }
 .find { display: flex; gap: 8px; width: 100%; margin-top: 6px; }
 .find input {
   flex: 1;

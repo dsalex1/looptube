@@ -463,12 +463,17 @@ onMounted(() => {
 
 const error = computed(() => active.value.error.value || yt.error.value)
 const shownStatus = computed(() => error.value || status.value)
+
+const build = __BUILD__
 </script>
 
 <template>
   <div class="app">
     <header class="bar">
-      <div class="brand"><Icon name="wave" stroke /><span>LoopTube</span></div>
+      <div class="brand">
+        <Icon name="wave" stroke />
+        <div class="brand__name"><span>LoopTube</span><span class="version">{{ build }}</span></div>
+      </div>
 
       <form v-if="id" class="find" @submit.prevent="submit()">
         <input
@@ -601,6 +606,8 @@ const shownStatus = computed(() => error.value || status.value)
   border-bottom: 1px solid #242424;
 }
 .brand { display: flex; align-items: center; gap: 7px; color: #f59e0b; font-weight: 600; font-size: 14px; }
+.brand__name { display: flex; flex-direction: column; line-height: 1.15; }
+.brand .version { font-size: 10px; font-weight: 500; color: #6b6b6b; font-variant-numeric: tabular-nums; }
 /* min-width:0 or the form refuses to shrink past its basis and shoves the last
    buttons off the side of a phone */
 .find { display: flex; gap: 6px; flex: 1 1 260px; min-width: 0; max-width: 460px; }
@@ -679,6 +686,6 @@ const shownStatus = computed(() => error.value || status.value)
 }
 @media (max-width: 760px) {
   .title { display: none; }
-  .brand span { display: none; }
+  .brand__name span:first-child { display: none; }
 }
 </style>

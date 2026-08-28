@@ -10,10 +10,14 @@ const base = process.env.PAGES_BASE ?? '/looptube/'
 // a build stamp the running app can show, so "what am I on" has an answer. The commit
 // count is the version: it only ever goes up, so two builds can be told apart at a glance
 // in a way a hash cannot. Falls back to "dev" outside a git checkout.
+// what the count was when the numbering was restarted at 7, so the shown version keeps
+// stepping by one from there rather than from however many commits the repo happens to have
+const VERSION_BASE = 28
 const build = (() => {
   const day = new Date().toISOString().slice(0, 10)
   try {
-    return `v${execSync('git rev-list --count HEAD').toString().trim()} · ${day}`
+    const count = Number(execSync('git rev-list --count HEAD').toString().trim())
+    return `v${count - VERSION_BASE} · ${day}`
   } catch {
     return `dev · ${day}`
   }
