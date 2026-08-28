@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue'
 import JogStrip from '@/components/JogStrip.vue'
+import StemMixer from '@/components/StemMixer.vue'
 import WaveformCanvas from '@/components/WaveformCanvas.vue'
+import { stemIcon, stemLabel, type StemPhase } from '@/helpers/stems'
 import type { Capabilities, PaneView } from '@/types'
-import { computed } from 'vue'
+import { onBeforeUnmount, onMounted, computed, ref } from 'vue'
 
 const props = defineProps<{
   can: Capabilities
@@ -17,6 +19,10 @@ const props = defineProps<{
   markers: number[]
   loopA: number | null
   loopB: number | null
+  /** the split of the track, if it has been split; the mixer hides behind one button */
+  stemNames: string[]
+  stemVolume: Record<string, number>
+  stemPhase: StemPhase | ''
 }>()
 
 const emit = defineEmits<{
@@ -27,6 +33,8 @@ const emit = defineEmits<{
   (e: 'nudgeLoop', direction: -1 | 1): void
   (e: 'scaleLoop', factor: number): void
   (e: 'seek', seconds: number): void
+  (e: 'setStemVolume', name: string, value: number): void
+  (e: 'muteStem', name: string): void
 }>()
 
 const tempo = defineModel<number>('tempo', { required: true })
@@ -57,6 +65,41 @@ const adjustGain = (d: number) =>
   (gainDb.value =
     Math.round(Math.max(-GAIN_LIMIT, Math.min(props.can.boost ? GAIN_LIMIT : 0, gainDb.value + d)) * 100) / 100)
 const signed = (n: number) => (n > 0 ? `+${n.toFixed(2)}` : n.toFixed(2))
+
+/**
+ * The mixer costs five rows of a screen that has none to spare, so it lives in a panel
+ * that floats over the stage and the button that opens it carries the mix instead: one
+ * glyph per stem, fading out as its fader comes down and struck through once it is muted.
+ * That way the state that mattered is still on the bar when the panel is shut.
+ */
+const stemsOpen = ref(false)
+const stems = ref<HTMLElement>()
+const splitting = computed(() => !props.stemNames.length)
+const stemsShown = computed(() => props.stemPhase !== '' || props.stemNames.length > 0)
+
+const stemHint = computed(() => {
+  if (props.stemPhase === 'failed') return 'Could not split this track into stems'
+  if (splitting.value) return props.stemPhase === 'downloading' ? 'Loading stems…' : 'Separating stems…'
+  const muted = props.stemNames.filter((n) => (props.stemVolume[n] ?? 1) === 0).map(stemLabel)
+  return muted.length ? `Stems — ${muted.join(', ')} muted` : 'Stems — all playing'
+})
+
+const level = (name: string) => props.stemVolume[name] ?? 1
+
+function closeStems(e: Event) {
+  if (!stems.value?.contains(e.target as Node)) stemsOpen.value = false
+}
+
+const onEscape = (e: KeyboardEvent) => e.key === 'Escape' && (stemsOpen.value = false)
+
+onMounted(() => {
+  document.addEventListener('pointerdown', closeStems)
+  window.addEventListener('keydown', onEscape)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', closeStems)
+  window.removeEventListener('keydown', onEscape)
+})
 
 const pitchHint = computed(() =>
   props.can.pitch ? 'Drag to shift pitch in semitones' : 'YouTube playback cannot shift pitch — load the audio to enable it'
@@ -112,32 +155,62 @@ const pitchHint = computed(() =>
       </div>
 
       <div class="tail">
-        <span class="stamp stamp--right">−{{ stamp(Math.max(0, duration - currentTime)) }}</span>
-        <div class="views">
+        <!-- the mix, small enough to ride the transport row: one glyph per stem, dimming
+             with its fader and struck through once it is muted -->
+        <div v-if="stemsShown" ref="stems" class="stems">
           <button
-            class="btn"
-            :class="{ 'btn--on': view === 'video' }"
-            aria-label="Video"
-            title="Video"
-            @click="view = 'video'"
+            class="btn btn--stems"
+            :class="{ 'btn--stems-open': stemsOpen }"
+            :disabled="splitting"
+            :title="stemHint"
+            :aria-label="stemHint"
+            :aria-expanded="stemsOpen"
+            @click="stemsOpen = !stemsOpen"
           >
-            <Icon name="video" />
+            <span v-if="splitting" class="spin" />
+            <template v-else>
+              <span
+                v-for="name in stemNames"
+                :key="name"
+                class="glyph"
+                :class="{ 'glyph--off': level(name) === 0 }"
+                :style="{ opacity: level(name) === 0 ? 1 : 0.3 + 0.7 * level(name) }"
+              >
+                <Icon :name="stemIcon(name)" stroke />
+              </span>
+            </template>
           </button>
-          <button
-            class="btn"
-            :class="{ 'btn--on': view === 'waveform' }"
-            aria-label="Waveform"
-            title="Waveform"
-            @click="view = 'waveform'"
-          >
-            <Icon name="wave" stroke />
-          </button>
+
+          <!-- floated over the stage rather than stacked above the bar: the faders want
+               the width, and the screen has no height to give them -->
+          <div v-if="stemsOpen" class="popover">
+            <StemMixer
+              :names="stemNames"
+              :volume="stemVolume"
+              @setVolume="(n, v) => emit('setStemVolume', n, v)"
+              @mute="(n) => emit('muteStem', n)"
+            />
+          </div>
         </div>
+
+        <span class="stamp stamp--right">−{{ stamp(Math.max(0, duration - currentTime)) }}</span>
       </div>
     </div>
 
     <!-- the dials wrap onto another row rather than running off the side of a phone -->
     <div class="dials">
+      <div class="dial">
+        <span class="cap">View</span>
+        <div class="dial__row">
+          <button class="btn" :class="{ 'btn--on': view === 'video' }" title="Video" @click="view = 'video'">
+            <Icon name="video" />
+          </button>
+          <button class="btn" :class="{ 'btn--on': view === 'waveform' }" title="Waveform" @click="view = 'waveform'">
+            <Icon name="wave" stroke />
+          </button>
+        </div>
+      </div>
+
       <div class="dial">
         <span class="cap">Markers</span>
         <div class="dial__row">
@@ -209,6 +282,7 @@ const pitchHint = computed(() =>
 
 <style scoped>
 .controls {
+  position: relative; /* the stems popover is placed against the whole bar */
   background: #0d0d0d;
   border-top: 1px solid #242424;
   padding: 9px 10px calc(9px + env(safe-area-inset-bottom));
@@ -223,7 +297,6 @@ const pitchHint = computed(() =>
 }
 .transport { display: flex; gap: 6px; }
 .tail { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
-.views { display: flex; gap: 4px; }
 
 .dials {
   display: flex;
@@ -236,6 +309,49 @@ const pitchHint = computed(() =>
 .dial { display: flex; flex-direction: column; gap: 5px; flex: 0 0 auto; }
 .dial__row { display: flex; align-items: center; gap: 4px; }
 .dial--off { opacity: 0.4; }
+
+/* the mix, small enough to sit on the bar: one glyph per stem, dimming with its fader */
+.btn--stems { display: flex; align-items: center; gap: 6px; padding-inline: 9px; }
+.btn--stems:disabled { opacity: 1; } /* it is a spinner, not a dead control */
+/* open is marked with a ring rather than the usual amber fill, which would swallow the
+   glyphs whole and take the mix off the bar exactly when it is being changed */
+.btn--stems-open { border-color: #e8bd6d; background: #211a0e; }
+.glyph { position: relative; display: block; color: #e8bd6d; }
+.glyph--off { color: #5a5a5a; }
+/* struck through, so silence never reads as merely quiet */
+.glyph--off::after {
+  content: '';
+  position: absolute;
+  inset: 50% -2px auto -2px;
+  height: 1.5px;
+  border-radius: 2px;
+  background: currentColor;
+  transform: rotate(-20deg);
+}
+
+/* spans the bar, so it can never run off the side whichever way the dials have wrapped */
+.popover {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: calc(100% + 8px);
+  z-index: 5;
+  padding: 11px 13px;
+  border: 1px solid #2c2c2c;
+  border-radius: 10px;
+  background: #121212;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+}
+
+.spin {
+  width: 13px;
+  height: 13px;
+  border: 2px solid #3a3a3a;
+  border-top-color: #e8bd6d;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 .cap {
   font-size: 10px;
@@ -304,8 +420,8 @@ const pitchHint = computed(() =>
      stuck together in a box that can only be placed as a unit */
   .tail { display: contents; }
   .stamp { order: 1; flex: 0 0 auto; min-width: 0; }
-  .stamp--right { order: 2; margin-left: 2px; }
-  .views { order: 3; margin-left: auto; }
+  .stems { order: 2; margin-left: auto; }
+  .stamp--right { order: 3; margin-left: auto; }
   .transport { order: 4; flex: 1 1 100%; justify-content: center; }
   .dials { justify-content: center; }
   .overview { height: 46px; }

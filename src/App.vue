@@ -5,7 +5,6 @@ import RecentGrid from '@/components/RecentGrid.vue'
 import Settings from '@/components/Settings.vue'
 import Stage from '@/components/Stage.vue'
 import StartPage from '@/components/StartPage.vue'
-import StemMixer from '@/components/StemMixer.vue'
 import { separate, type StemPhase } from '@/helpers/stems'
 import { useAudioEngine } from '@/composables/useAudioEngine'
 import { useYouTubePlayer } from '@/composables/useYouTubePlayer'
@@ -487,17 +486,8 @@ const shownStatus = computed(() => error.value || status.value)
       @zoom="zoom"
     />
 
-    <StemMixer
-      v-if="id && useEngine"
-      :names="stemNames"
-      :volume="stemVolume"
-      :phase="stemPhase"
-      @setVolume="engine.setStemVolume"
-      @mute="engine.toggleStemMute"
-    />
-
     <StartPage
-      v-else
+      v-if="!id"
       :items="recentItems"
       :offline="offlineIds"
       :error="startError"
@@ -524,6 +514,11 @@ const shownStatus = computed(() => error.value || status.value)
       :markers="markers"
       :loopA="loopA"
       :loopB="loopB"
+      :stemNames="useEngine ? stemNames : []"
+      :stemVolume="stemVolume"
+      :stemPhase="useEngine ? stemPhase : ''"
+      @setStemVolume="engine.setStemVolume"
+      @muteStem="engine.toggleStemMute"
       @toggle="active.toggle()"
       @seek="active.seek($event)"
       @toStart="toStart"

@@ -16,6 +16,13 @@ export type StemPhase = 'separating' | 'downloading' | 'ready' | 'failed'
 export const STEM_NAMES = ['vocals', 'guitars', 'bass', 'drums'] as const
 export type StemName = (typeof STEM_NAMES)[number]
 
+// A stem's glyph and its readable name. Both the mixer and the button that opens it draw
+// the same set, which is the whole point: the button is a small copy of what is inside.
+const ICONS: Record<string, string> = { vocals: 'mic', guitars: 'guitar', bass: 'note', drums: 'drum', other: 'wave' }
+const LABELS: Record<string, string> = { vocals: 'Vocals', guitars: 'Guitar', bass: 'Bass', drums: 'Drums', other: 'Other' }
+export const stemIcon = (name: string) => ICONS[name] ?? 'wave'
+export const stemLabel = (name: string) => LABELS[name] ?? name
+
 const POLL_MS = 2500
 const POLL_TIMEOUT_MS = 5 * 60_000
 
