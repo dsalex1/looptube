@@ -83,7 +83,7 @@ function onDrop(e: DragEvent) {
   gap: 34px;
   align-items: center;
 }
-.start.dragging { outline: 2px dashed #e8bd6d; outline-offset: -10px; }
+.start.dragging { outline: 2px dashed #f59e0b; outline-offset: -10px; }
 .hero {
   display: flex;
   flex-direction: column;
@@ -93,7 +93,7 @@ function onDrop(e: DragEvent) {
   width: 100%;
   max-width: 560px;
 }
-.hero > svg { width: 42px; height: 42px; color: #e8bd6d; }
+.hero > svg { width: 42px; height: 42px; color: #f59e0b; }
 h1 { margin: 0; font-size: 22px; font-weight: 600; color: #f0f0f0; }
 .hero p { margin: 0; font-size: 14px; line-height: 1.5; color: #8a8a8a; }
 .find { display: flex; gap: 8px; width: 100%; margin-top: 6px; }
@@ -108,11 +108,11 @@ h1 { margin: 0; font-size: 22px; font-weight: 600; color: #f0f0f0; }
   color: #ececec;
   font-size: 15px;
 }
-.find input:focus { outline: none; border-color: #e8bd6d; }
+.find input:focus { outline: none; border-color: #f59e0b; }
 .go {
   height: 42px;
   padding: 0 20px;
-  background: #e8bd6d;
+  background: #f59e0b;
   color: #101010;
   border: 0;
   border-radius: 9px;

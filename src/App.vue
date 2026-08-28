@@ -606,7 +606,7 @@ const shownStatus = computed(() => error.value || status.value)
   background: #0d0d0d;
   border-bottom: 1px solid #242424;
 }
-.brand { display: flex; align-items: center; gap: 7px; color: #e8bd6d; font-weight: 600; font-size: 14px; }
+.brand { display: flex; align-items: center; gap: 7px; color: #f59e0b; font-weight: 600; font-size: 14px; }
 /* min-width:0 or the form refuses to shrink past its basis and shoves the last
    buttons off the side of a phone */
 .find { display: flex; gap: 6px; flex: 1 1 260px; min-width: 0; max-width: 460px; }
@@ -621,11 +621,11 @@ const shownStatus = computed(() => error.value || status.value)
   color: #ececec;
   font-size: 14px;
 }
-.find input:focus { outline: none; border-color: #e8bd6d; }
+.find input:focus { outline: none; border-color: #f59e0b; }
 .go {
   height: 34px;
   padding: 0 13px;
-  background: #e8bd6d;
+  background: #f59e0b;
   color: #101010;
   border: 0;
   border-radius: 7px;
@@ -654,7 +654,7 @@ const shownStatus = computed(() => error.value || status.value)
   color: #cfcfcf;
   cursor: pointer;
 }
-.icon--ok { color: #101010; background: #e8bd6d; border-color: #e8bd6d; }
+.icon--ok { color: #101010; background: #f59e0b; border-color: #f59e0b; }
 .scrim {
   position: fixed;
   inset: 0;

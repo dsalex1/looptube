@@ -49,7 +49,7 @@ defineEmits<{ setVolume: [name: string, value: number]; mute: [name: string] }>(
   font-weight: 500;
   cursor: pointer;
 }
-.lbl svg { color: #e8bd6d; }
+.lbl svg { color: #f59e0b; }
 .row.off .lbl,
 .row.off .lbl svg { color: #5f5f5f; }
 .row.off .lbl span { text-decoration: line-through; }

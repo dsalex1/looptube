@@ -62,7 +62,7 @@ defineEmits<{ (e: 'open', id: string): void; (e: 'forget', id: string): void }>(
   border: 1px solid #262626;
 }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.open:hover .thumb { border-color: #e8bd6d; }
+.open:hover .thumb { border-color: #f59e0b; }
 .badge {
   position: absolute;
   top: 6px;
@@ -71,7 +71,7 @@ defineEmits<{ (e: 'open', id: string): void; (e: 'forget', id: string): void }>(
   padding: 3px 5px;
   border-radius: 5px;
   background: rgba(10, 10, 10, 0.82);
-  color: #e8bd6d;
+  color: #f59e0b;
 }
 .len {
   position: absolute;

@@ -68,7 +68,7 @@ function saveService() {
 }
 header { display: flex; align-items: center; justify-content: space-between; }
 h2 { margin: 0; font-size: 17px; }
-h3 { margin: 0 0 6px; font-size: 14px; color: #e8bd6d; }
+h3 { margin: 0 0 6px; font-size: 14px; color: #f59e0b; }
 section { margin-top: 18px; }
 label { display: block; font-size: 12px; color: #8f8f8f; margin-bottom: 5px; }
 input[type='url'] {
@@ -95,7 +95,7 @@ input[type='url'] {
   font-size: 13px;
   cursor: pointer;
 }
-.btn--primary { background: #e8bd6d; border-color: #e8bd6d; color: #101010; font-weight: 600; }
+.btn--primary { background: #f59e0b; border-color: #f59e0b; color: #101010; font-weight: 600; }
 .icon {
   display: flex;
   width: 30px;

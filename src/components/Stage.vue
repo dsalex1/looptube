@@ -106,7 +106,7 @@ const percent = computed(() => `${Math.round((props.progress ?? 0) * 100)}%`)
   padding: 7px 12px; border-radius: 8px; font-size: 12px; line-height: 1.35;
   background: rgba(20, 20, 20, 0.92); color: #b9b9b9; border: 1px solid #2a2a2a;
 }
-.hint svg { flex: none; color: #e8bd6d; }
+.hint svg { flex: none; color: #f59e0b; }
 .status {
   position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
   padding: 6px 14px; border-radius: 999px; font-size: 13px;
@@ -131,7 +131,7 @@ const percent = computed(() => `${Math.round((props.progress ?? 0) * 100)}%`)
 .ring { width: 26px; height: 26px; flex: none; transform: rotate(-90deg); }
 .ring circle { fill: none; stroke-width: 5; }
 .ring .track { stroke: #2c2c2c; }
-.ring .head { stroke: #e8bd6d; stroke-linecap: round; transition: stroke-dashoffset 0.15s linear; }
+.ring .head { stroke: #f59e0b; stroke-linecap: round; transition: stroke-dashoffset 0.15s linear; }
 .ring.spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(270deg); } }
 .busy__pct { font-variant-numeric: tabular-nums; color: #9a9a9a; }
