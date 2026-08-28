@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { PEAKS_PER_SECOND } from '@/helpers/audioPeaks'
+import { PEAK_CEILING, PEAK_CEILING_DB, PEAKS_PER_SECOND } from '@/helpers/audioPeaks'
 import { useElementSize } from '@vueuse/core'
 import { computed, onMounted, ref, watch } from 'vue'
 
@@ -28,11 +28,11 @@ const props = withDefaults(
     reduction?: number
     /** where the limiter is holding the output, or null when it is passing through */
     ceilingDb?: number | null
-    /** headroom above 0 dBFS to keep on screen, so what clips is visible rather than
-     * flattened against the edge */
+    /** headroom above 0 dBFS to keep on screen, so what is driven past it is visible
+     * rather than flattened against the edge */
     headroomDb?: number
   }>(),
-  { loopA: null, loopB: null, loopActive: true, ceilingDb: null, monitor: false, gainDb: 0, outTrail: null, reductionTrail: null, reduction: 0, headroomDb: 0 }
+  { loopA: null, loopB: null, loopActive: true, ceilingDb: null, monitor: false, gainDb: 0, outTrail: null, reductionTrail: null, reduction: 0, headroomDb: PEAK_CEILING_DB }
 )
 
 const emit = defineEmits<{
@@ -103,7 +103,7 @@ const timeOf = (x: number) => props.start + x * secondsPerPixel.value
 const clampTime = (t: number) => Math.max(0, Math.min(t, props.duration))
 
 /** loudest value between two times, 0..1, over any per-bucket series */
-function peakBetween(from: number, to: number, data: Uint8Array | Float32Array = props.peaks, scale = 1 / 255) {
+function peakBetween(from: number, to: number, data: Uint8Array | Float32Array = props.peaks, scale = PEAK_CEILING / 255) {
   const first = Math.max(0, Math.floor(from * PEAKS_PER_SECOND))
   const last = Math.min(data.length - 1, Math.max(first, Math.ceil(to * PEAKS_PER_SECOND) - 1))
   let peak = 0

@@ -144,16 +144,26 @@ export function useAudioEngine() {
 
   const gainVector = () => stemNames.value.map((n) => stemVolume.value[n] ?? 1)
 
-  /** The waveform for the current fader positions: per-stem peaks summed by their gains. */
+  /**
+   * The waveform for the current fader positions: the per-stem peaks at their gains.
+   *
+   * Power, not amplitude: four stems do not hit their peaks in the same instant, so
+   * adding their bytes overstates the mix by several decibels and pins it at the top of
+   * the scale — which is what made the waveform jump and flatten the moment stems landed.
+   * Adding their squares is the usual estimate for parts that are not in lockstep.
+   */
   function recomputeStemPeaks() {
     const names = stemNames.value
     if (!names.length) return (stemPeaks.value = new Uint8Array())
     const len = names.reduce((m, n) => Math.max(m, stemPeaksPer.get(n)?.length ?? 0), 0)
     const out = new Uint8Array(len)
     for (let i = 0; i < len; i++) {
-      let sum = 0
-      for (const n of names) sum += (stemVolume.value[n] ?? 1) * (stemPeaksPer.get(n)?.[i] ?? 0)
-      out[i] = Math.min(255, Math.round(sum))
+      let power = 0
+      for (const n of names) {
+        const level = (stemVolume.value[n] ?? 1) * (stemPeaksPer.get(n)?.[i] ?? 0)
+        power += level * level
+      }
+      out[i] = Math.min(255, Math.round(Math.sqrt(power)))
     }
     stemPeaks.value = out
   }

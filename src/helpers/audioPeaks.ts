@@ -1,5 +1,14 @@
-/** Waveform peak data: one byte of 0..255 peak amplitude per bucket. */
+/** Waveform peak data: one byte per bucket, 0..255 spanning silence to PEAK_CEILING_DB. */
 export const PEAKS_PER_SECOND = 100
+
+/**
+ * How far above 0 dBFS a peak can still be recorded. A brickwalled master decodes past
+ * full scale — the encoder never promised to stay under it — and clamping there flattens
+ * every one of those peaks onto the same line, which reads as clipping however loud the
+ * track actually is.
+ */
+export const PEAK_CEILING_DB = 2
+export const PEAK_CEILING = 10 ** (PEAK_CEILING_DB / 20)
 
 // only the parts of AudioBuffer we need, so this stays testable without Web Audio
 type ChannelData = { numberOfChannels: number; length: number; sampleRate: number; getChannelData(i: number): Float32Array }
@@ -18,7 +27,7 @@ export function computePeaks(buffer: ChannelData, perSecond = PEAKS_PER_SECOND):
         const v = Math.abs(samples[i])
         if (v > peak) peak = v
       }
-    peaks[bucket] = Math.min(255, Math.round(peak * 255))
+    peaks[bucket] = Math.min(255, Math.round((peak / PEAK_CEILING) * 255))
   }
   return peaks
 }

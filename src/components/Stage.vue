@@ -58,7 +58,6 @@ const percent = computed(() => `${Math.round((props.progress ?? 0) * 100)}%`)
         :loopB="loopB"
         :loopActive="loopActive"
         :position="position"
-        :headroomDb="2"
         @seek="$emit('seek', $event)"
         @moveMarker="(i, s) => $emit('moveMarker', i, s)"
         @moveLoop="(w, s) => $emit('moveLoop', w, s)"

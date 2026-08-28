@@ -8,7 +8,7 @@ const props = defineProps<{
   max: number
   label: string
   sub?: string
-  /** double-click snaps back to this */
+  /** a double tap or double click snaps back to this */
   resetTo?: number
 }>()
 
@@ -40,12 +40,29 @@ function onPointerMove(e: PointerEvent) {
   value.value = quantise(fromValue + ((e.clientX - fromX) / PIXELS_PER_STEP) * props.step)
 }
 
-function onPointerUp() {
-  dragging.value = false
-}
-
 function onReset() {
   if (props.resetTo != null) value.value = props.resetTo
+}
+
+// A double tap on a touchscreen never arrives as dblclick, so for touch the pair is
+// measured off pointerup instead. The mouse keeps dblclick, which already handles the
+// system's own double-click speed.
+const TAP_MS = 400
+const TAP_SLOP = 8 // a tap that slid this far was a drag, not a tap
+let lastTap = 0
+
+function onPointerUp(e: PointerEvent) {
+  dragging.value = false
+  if (e.pointerType === 'mouse') return
+  if (Math.abs(e.clientX - fromX) > TAP_SLOP) {
+    lastTap = 0
+    return
+  }
+  const now = performance.now()
+  if (now - lastTap < TAP_MS) {
+    onReset()
+    lastTap = 0
+  } else lastTap = now
 }
 
 // A write to the model only comes back on the next render, so several wheel events in
@@ -70,8 +87,8 @@ function onWheel(e: WheelEvent) {
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
-    @pointercancel="onPointerUp"
     @dblclick="onReset"
+    @pointercancel="onPointerUp"
     @wheel="onWheel"
   >
     <span class="jog__label">{{ label }}</span>

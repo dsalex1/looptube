@@ -1,4 +1,4 @@
-import { computePeaks } from '@/helpers/audioPeaks'
+import { computePeaks, PEAK_CEILING } from '@/helpers/audioPeaks'
 import { emptyState, fromHash, toHash } from '@/helpers/persist'
 import { videoId } from '@/helpers/youtube'
 import { describe, expect, it } from 'vitest'
@@ -44,19 +44,27 @@ describe('hash round trip', () => {
 })
 
 describe('computePeaks', () => {
-  it('reduces samples to one byte per bucket at full scale', () => {
+  const peaksOf = (fill: number, first: number) => {
     const sampleRate = 100
     const samples = new Float32Array(sampleRate)
-    samples.fill(0.5)
-    samples[0] = 1 // the loudest sample in its bucket is what survives
+    samples.fill(fill)
+    samples[0] = first // the loudest sample in its bucket is what survives
 
-    const peaks = computePeaks(
+    return computePeaks(
       { numberOfChannels: 1, length: samples.length, sampleRate, getChannelData: () => samples },
       10 // ten buckets per second, so ten samples each
     )
+  }
 
+  it('reduces samples to one byte per bucket, scaled to the ceiling above 0 dBFS', () => {
+    const peaks = peaksOf(0.5, 1)
     expect(peaks.length).toBe(10)
-    expect(peaks[0]).toBe(255)
-    expect(peaks[1]).toBe(128)
+    expect(peaks[0]).toBe(Math.round((1 / PEAK_CEILING) * 255)) // 0 dBFS, short of the top
+    expect(peaks[1]).toBe(Math.round((0.5 / PEAK_CEILING) * 255))
+  })
+
+  it('keeps peaks driven past 0 dBFS apart, up to the ceiling', () => {
+    expect(peaksOf(0, 1.1)[0]).toBeGreaterThan(peaksOf(0, 1)[0])
+    expect(peaksOf(0, PEAK_CEILING * 2)[0]).toBe(255)
   })
 })
