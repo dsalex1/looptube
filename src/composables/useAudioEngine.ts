@@ -265,7 +265,25 @@ export function useAudioEngine() {
     baseTrackTime = currentTime.value
   }
 
-  const positionNow = () => baseTrackTime + (audioContext().currentTime - baseContextTime) * tempo.value
+  /**
+   * How long ago the sound you are hearing right now was rendered. `currentTime` is the
+   * graph's clock, not the speaker's: what the shifter computes at that instant is still
+   * a buffer's journey away from being audible.
+   */
+  const outputLag = () => (context ? context.baseLatency + (context.outputLatency || 0) : 0)
+
+  /**
+   * Where the sound currently leaving the speakers sits in the track — which is what the
+   * waveform should draw and what the muted video should be held to, rather than where
+   * the graph has got to. The lag is measured in output seconds, so it stands for that
+   * much more of the track the faster the track is being played: at 2x a 50 ms buffer is
+   * 100 ms of music, and a playhead that ignored it would sit that far ahead of the beat.
+   *
+   * For the first `outputLag` after starting or seeking, nothing from the new position
+   * has reached the speakers yet, so the playhead waits there rather than running backwards.
+   */
+  const positionNow = () =>
+    baseTrackTime + Math.max(0, audioContext().currentTime - baseContextTime - outputLag()) * tempo.value
 
   function tick() {
     if (!playing.value) return
@@ -312,9 +330,11 @@ export function useAudioEngine() {
    * than one peak: a caller that knows where the playhead is can place every sample at
    * the moment it belongs to, instead of smearing the whole window over one instant.
    *
-   * `latency` is how far behind the playhead that window sits: the shifter computes a
-   * render quantum at a time, so what it produced for a given position only reaches the
-   * graph a quantum later, and that offset is what would otherwise drag readings late.
+   * `latency` is where that window sits relative to the playhead. The shifter computes a
+   * render quantum at a time, so its output reaches the graph a quantum late — but the
+   * playhead tracks the speakers, which the graph is a whole output buffer ahead of, so
+   * on balance the window holds audio that has not been heard yet and the offset is
+   * negative.
    */
   function levels() {
     preTap?.getFloatTimeDomainData(preSamples)
@@ -323,7 +343,7 @@ export function useAudioEngine() {
       pre: preSamples,
       post: postSamples,
       sampleRate: context?.sampleRate ?? 48000,
-      latency: RENDER_QUANTUM / (context?.sampleRate ?? 48000),
+      latency: RENDER_QUANTUM / (context?.sampleRate ?? 48000) - outputLag(),
       reduction: limiter?.reduction ?? 0,
     }
   }
