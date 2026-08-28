@@ -13,7 +13,7 @@
  * scripts/__test-sync-collector.mjs.
  */
 import { useAudioEngine } from '@/composables/useAudioEngine'
-import { clampRate, DRIFT, videoDriftPerSecond } from '@/helpers/videoSync'
+import { clampRate, simulateFollow, videoDriftPerSecond } from '@/helpers/videoSync'
 
 const SAMPLE_RATE = 48000
 const TRACK_SECONDS = 45
@@ -184,13 +184,16 @@ async function run() {
     })
   }
 
+  // the picture is held by trimming its rate, so what matters is how far out it ever gets
+  // and how often that had to be given up on and seeked instead
   const video = tempos.map((tempo) => {
-    const drift = videoDriftPerSecond(tempo)
+    const { maxError, resyncs } = simulateFollow(tempo, { offset: 0.4 })
     return {
       tempo,
       videoRate: clampRate(tempo),
-      driftPerSecond: +drift.toFixed(3),
-      resyncEverySeconds: drift ? +(DRIFT / drift).toFixed(2) : Infinity,
+      rateShortfall: +videoDriftPerSecond(tempo).toFixed(3),
+      worstGapMs: +(maxError * 1000).toFixed(0),
+      seeksPerMinute: resyncs,
     }
   })
 

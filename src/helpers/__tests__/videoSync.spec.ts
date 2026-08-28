@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { simulateFollow, videoDriftPerSecond, YT_RATE_MAX } from '@/helpers/videoSync'
+import { clampRate, followRate, simulateFollow, videoDriftPerSecond, YT_RATE_MAX } from '@/helpers/videoSync'
 
 /** every tempo the jog wheel can reach with real audio loaded */
 const sweep = () => {
@@ -15,18 +15,29 @@ describe('the muted video following the engine', () => {
     expect(reachable().filter((tempo) => videoDriftPerSecond(tempo) > 1e-9)).toEqual([])
   })
 
-  it('never needs pulling back into place at a tempo the player can hold', () => {
-    const jerky = reachable()
-      .map((tempo) => ({ tempo, ...simulateFollow(tempo, { seconds: 300 }) }))
-      .filter((r) => r.resyncs > 0)
-    expect(jerky).toEqual([])
+  it('closes an offset by trimming the rate, never by seeking', () => {
+    // the two clocks do not start out agreeing: the player reports its own idea of where
+    // it is, and that idea is a little behind what we are hearing
+    const rough = reachable().map((tempo) => ({ tempo, ...simulateFollow(tempo, { offset: 0.4 }) }))
+    expect(rough.filter((r) => r.resyncs > 0)).toEqual([])
+    expect(rough.filter((r) => r.maxError > 0.45)).toEqual([])
   })
 
-  it('past the player`s ceiling, corrects on a cadence rather than every frame', () => {
-    // the picture cannot keep up above 2x and there is no fixing that; what it must not
-    // do is stutter continuously trying
-    const { resyncs } = simulateFollow(3, { seconds: 60 })
-    expect(resyncs).toBeLessThanOrEqual(60 / 0.5)
-    expect(resyncs).toBeGreaterThan(0)
+  it('settles rather than hunting', () => {
+    expect(simulateFollow(1.15, { offset: 0.4, seconds: 30 }).maxError).toBeLessThan(0.45)
+    expect(followRate(1.15, 0)).toBeCloseTo(1.15, 6)
+  })
+
+  it('still seeks for a jump, which no amount of trimming would close', () => {
+    // a loop wrapping back to A is not drift
+    expect(simulateFollow(1, { offset: 30, seconds: 10 }).resyncs).toBe(1)
+  })
+
+  it('never asks the player for a rate it cannot hold', () => {
+    for (const tempo of sweep())
+      for (const error of [-5, -0.3, 0, 0.3, 5]) {
+        const rate = followRate(tempo, error)
+        expect(rate).toBe(clampRate(rate))
+      }
   })
 })

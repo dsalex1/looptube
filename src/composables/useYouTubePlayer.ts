@@ -10,6 +10,7 @@ import { onUnmounted, ref, watch } from 'vue'
  */
 export function useYouTubePlayer(host: () => HTMLElement | undefined): Transport & {
   mount(videoId: string): Promise<void>
+  setRate(rate: number): void
 } {
   const currentTime = ref(0)
   const duration = ref(0)
@@ -112,6 +113,14 @@ export function useYouTubePlayer(host: () => HTMLElement | undefined): Transport
 
   const skip = (seconds: number) => seek(currentTime.value + seconds)
 
+  /**
+   * Run the picture a shade off its tempo. This is how it is kept with the engine when the
+   * engine is the one making sound: bending the rate is invisible, where seeking flickers
+   * the player's own controls every time. The next `tempo` change overrides it, and the
+   * follower simply nudges again.
+   */
+  const setRate = (rate: number) => player?.setPlaybackRate(clampRate(rate))
+
   watch(tempo, (v) => player?.setPlaybackRate(clampRate(v)))
   watch(gainDb, (v) => player?.setVolume(volumeOf(v)))
 
@@ -123,7 +132,7 @@ export function useYouTubePlayer(host: () => HTMLElement | undefined): Transport
 
   return {
     currentTime, duration, playing, loading, error, tempo, pitch, gainDb,
-    loopA, loopB, loopEnabled, play, pause, toggle, seek, skip, mount,
+    loopA, loopB, loopEnabled, play, pause, toggle, seek, skip, mount, setRate,
     can: { pitch: false, boost: false, tempoMin: YT_RATE_MIN, tempoMax: YT_RATE_MAX },
   }
 }

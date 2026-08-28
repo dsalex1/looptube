@@ -17,11 +17,22 @@
 export const YT_RATE_MIN = 0.25
 export const YT_RATE_MAX = 2
 
-/** how far the picture may wander from the sound before it is pulled back, in seconds */
-export const DRIFT = 0.15
+/**
+ * A gap this wide is a jump — a loop wrapping, or a scrub — not drift, and nothing but a
+ * seek will close it. Anything smaller is bent away by trimming the rate instead: seeking
+ * the iframe flickers its play button every time, which is worse to sit in front of than
+ * a picture a tenth of a second out.
+ */
+export const JUMP = 1
 
-/** a seek costs a visible stutter, so they are not allowed to come thick and fast */
-export const RESYNC_COOLDOWN = 0.5
+/** how hard the picture is pulled back, per second of error */
+const SLEW = 0.6
+
+/** the most the rate may be bent; past this the correction itself becomes visible */
+const SLEW_LIMIT = 0.08
+
+/** how far apart two rates must be before it is worth telling the player about it */
+export const RATE_EPSILON = 0.004
 
 export const clampRate = (v: number) => Math.max(YT_RATE_MIN, Math.min(YT_RATE_MAX, v))
 
@@ -36,30 +47,32 @@ export interface FollowResult {
 }
 
 /**
- * Play the follow loop forward on paper: the video runs at whatever rate the player would
- * accept, the engine runs at the tempo it was asked for, and the gap is checked every
- * frame. A run needing many resyncs looks broken however small `maxError` stays, which is
- * why both are reported.
+ * The rate to run the picture at to close a gap of `error` seconds, where a positive
+ * error means the sound is ahead and the picture has to hurry.
  */
-export function simulateFollow(
-  tempo: number,
-  { seconds = 60, fps = 60, drift = DRIFT, cooldown = RESYNC_COOLDOWN, rate = clampRate(tempo) } = {}
-): FollowResult {
+export const followRate = (tempo: number, error: number) =>
+  clampRate(tempo * (1 + Math.max(-SLEW_LIMIT, Math.min(SLEW_LIMIT, error * SLEW))))
+
+/**
+ * Play the follow loop forward on paper. A run needing any resync at all is a run that
+ * flickers the player's controls, which is the thing being avoided, so both the worst gap
+ * and the resync count are reported.
+ */
+export function simulateFollow(tempo: number, { seconds = 60, fps = 60, offset = 0 } = {}): FollowResult {
   let audio = 0
-  let video = 0
+  let video = -offset // the player's own clock need not agree with ours to begin with
   let maxError = 0
   let resyncs = 0
-  let sinceResync = cooldown
   for (let frame = 0; frame < seconds * fps; frame++) {
-    audio += tempo / fps
-    video += rate / fps
-    sinceResync += 1 / fps
-    maxError = Math.max(maxError, Math.abs(video - audio))
-    if (Math.abs(video - audio) > drift && sinceResync >= cooldown) {
+    const error = audio - video
+    maxError = Math.max(maxError, Math.abs(error))
+    if (Math.abs(error) > JUMP) {
       video = audio
-      sinceResync = 0
       resyncs++
+      continue
     }
+    audio += tempo / fps
+    video += followRate(tempo, error) / fps
   }
   return { maxError, resyncs }
 }

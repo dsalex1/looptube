@@ -252,7 +252,13 @@ Point the app at your own worker under the gear icon; it defaults to the deploye
   "Access blocked" to datacenter requests.
 - Very long videos may exceed the Worker subrequest budget, since the audio is pulled in
   chunks. Songs are fine; a three-hour livestream is not.
-- Above 2x the iframe player runs out of playback rate, so the picture cannot keep up with
-  the audio and is pulled back into place every half second or so. The waveform stays exact.
+- Playback stays on the iframe's own audio — which can never be out of step with the
+  picture — and only moves to the Web Audio engine for what the iframe cannot do: pitch
+  shifting, boosting past unity, rates outside 0.25–2x, a stem blend, or a file that is
+  not this video's audio. It hands back as soon as none of that is asked for.
+- While the engine does have the floor, the muted picture is kept with it by running a
+  shade fast or slow rather than by being seeked, since every seek flickers the player's
+  own controls. Above 2x the player runs out of rate and cannot keep up at all, so there
+  it does get seeked, about once a second. The waveform stays exact either way.
 - Only extraction is proxied. Playback stays in YouTube's own embedded player, so views
   and ads are served normally.

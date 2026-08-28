@@ -11,10 +11,10 @@ import { useYouTubePlayer } from '@/composables/useYouTubePlayer'
 import { cachedIds } from '@/helpers/audioCache'
 import { fromFile, fromService, synthetic, type PeaksResult } from '@/helpers/peaksSource'
 import { forget, recents, remember, type Recent } from '@/helpers/recents'
-import { DRIFT, RESYNC_COOLDOWN } from '@/helpers/videoSync'
+import { followRate, JUMP, RATE_EPSILON, YT_RATE_MAX, YT_RATE_MIN } from '@/helpers/videoSync'
 import { emptyState, fromHash, load as loadState, save as saveState, toHash } from '@/helpers/persist'
 import { videoId } from '@/helpers/youtube'
-import type { LoopState, PaneView, Transport } from '@/types'
+import type { Capabilities, LoopState, PaneView, Transport } from '@/types'
 import { useDebounceFn } from '@vueuse/core'
 import { computed, nextTick, onMounted, ref, watch, type Ref } from 'vue'
 
@@ -62,24 +62,53 @@ const engine = useAudioEngine()
 
 // The engine is vendored from asla, which had only ever one backend and so says nothing
 // about what it can do. With the whole track decoded it can do everything.
-const engineTransport = Object.assign(engine, {
-  can: { pitch: true, boost: true, tempoMin: 0.25, tempoMax: 4 },
-}) as unknown as Transport
+const engineTransport = engine as unknown as Transport
 
-/** Real audio beats the iframe: it is the only way to get pitch shifting and a boost. */
-const useEngine = ref(false)
+/**
+ * Which of the two is making sound.
+ *
+ * The video's own audio can never be out of step with the picture, so it is preferred and
+ * the engine only takes over for the things it alone can do: shifting pitch, boosting past
+ * unity, running outside the rates the player holds, playing a stem blend, or playing a
+ * file that is not this video's audio at all. Whenever none of that is asked for, playback
+ * goes back to the iframe and the question of keeping them together stops existing.
+ */
+const engineReady = ref(false) // the track is decoded and the engine could take over
+const foreignAudio = ref(false) // what is loaded is not what the video would play
+
+// the three the controls drive live here rather than on a transport, so they survive a
+// handover and so setting one can be what triggers it
+const tempo = ref(1)
+const pitch = ref(0)
+const gainDb = ref(0)
+
+const stemsAdjusted = computed(() => engine.stemNames.value.some((n) => (engine.stemVolume.value[n] ?? 1) !== 1))
+
+const needsEngine = computed(
+  () =>
+    foreignAudio.value ||
+    pitch.value !== 0 ||
+    gainDb.value > 0 ||
+    tempo.value < YT_RATE_MIN ||
+    tempo.value > YT_RATE_MAX ||
+    stemsAdjusted.value
+)
+const useEngine = computed(() => engineReady.value && needsEngine.value)
 const active = computed<Transport>(() => (useEngine.value ? engineTransport : yt))
 
-/** Bind a control to whichever transport is driving, so one set of controls serves both. */
-function proxy<K extends 'tempo' | 'pitch' | 'gainDb'>(key: K) {
-  return computed({
-    get: () => active.value[key].value,
-    set: (v: number) => (active.value[key].value = v),
-  })
-}
-const tempo = proxy('tempo')
-const pitch = proxy('pitch')
-const gainDb = proxy('gainDb')
+// What the controls offer is what the track can be made to do, not what happens to be
+// playing it: greying out pitch while the iframe drives would leave no way to ask for it.
+const can = computed<Capabilities>(() =>
+  engineReady.value ? { pitch: true, boost: true, tempoMin: 0.25, tempoMax: 4 } : yt.can
+)
+
+watch(tempo, (v) => ((yt.tempo.value = v), (engine.tempo.value = v)), { immediate: true })
+watch(pitch, (v) => (engine.pitch.value = v), { immediate: true })
+// the iframe can only attenuate, and is silenced outright while the engine has the floor
+watch([gainDb, useEngine], ([v, on]) => {
+  engine.gainDb.value = v
+  yt.gainDb.value = on ? -60 : Math.min(v, 0)
+}, { immediate: true })
 
 // --- stems: once real audio is playing, split it and offer the parts as mute toggles ----
 const stemPhase = ref<StemPhase | ''>('')
@@ -129,12 +158,14 @@ const markerAtPlayhead = computed(() => markers.value.some((m) => Math.abs(m - c
 
 // --- loading a video ---------------------------------------------------------------
 
-function applyState(target: Transport, state: LoopState) {
-  target.loopA.value = state.loopA
-  target.loopB.value = state.loopB
-  target.tempo.value = state.tempo
-  target.pitch.value = state.pitch
-  target.gainDb.value = state.gainDb
+function applyState(state: LoopState) {
+  tempo.value = state.tempo
+  pitch.value = state.pitch
+  gainDb.value = state.gainDb
+  for (const t of [yt, engineTransport]) {
+    t.loopA.value = state.loopA
+    t.loopB.value = state.loopB
+  }
 }
 
 async function open(nextId: string, state = loadState(nextId)) {
@@ -144,11 +175,12 @@ async function open(nextId: string, state = loadState(nextId)) {
   noteRecent({ id: nextId, title: state.title })
   title.value = state.title ?? ''
   markers.value = [...state.markers]
-  useEngine.value = false
+  engineReady.value = false
+  foreignAudio.value = false
   isSynthetic.value = true
   peaks.value = new Uint8Array()
   span.value = DEFAULT_SPAN
-  applyState(yt, state)
+  applyState(state)
 
   await nextTick()
   await yt.mount(nextId)
@@ -207,18 +239,21 @@ function reasonFor(e: unknown) {
   return 'No audio samples — video looping still works'
 }
 
-/** Hand playback to the Web Audio engine, carrying across whatever is set right now. */
+/**
+ * Load the track into the engine and leave it idle. It does not start playing: the video's
+ * own audio is already in sync with the picture, so the engine waits until something is
+ * asked for that only it can do.
+ */
 async function activate(result: PeaksResult, state: LoopState) {
-  if (!result.audioUrl) return adopt(result)
-  const at = yt.currentTime.value
-  const wasPlaying = yt.playing.value
-  yt.pause()
-  applyState(engineTransport, { ...state, tempo: yt.tempo.value, gainDb: yt.gainDb.value })
-  await engine.load(result.audioUrl, result.duration)
   adopt(result)
-  useEngine.value = true
-  engine.seek(at)
-  if (wasPlaying) engine.play()
+  if (!result.audioUrl) return
+  await engine.load(result.audioUrl, result.duration)
+  if (engine.error.value) return
+  for (const t of [yt, engineTransport]) {
+    t.loopA.value = state.loopA
+    t.loopB.value = state.loopB
+  }
+  engineReady.value = true
 }
 
 const startError = ref('')
@@ -322,11 +357,24 @@ watch(loopOpen, (open) => {
   engine.loopEnabled.value = open
 }, { immediate: true })
 
-// --- keeping the muted video with the audio ----------------------------------------
+// --- handing over between the two, and keeping the muted video with the audio -------
 
-watch(useEngine, (on) => {
-  if (!on) return
-  yt.gainDb.value = -60 // the engine is the one making sound now
+let lastRate = 0
+
+/** Move playback to whichever transport is now in charge, carrying the playhead with it. */
+watch(useEngine, async (on, was) => {
+  const from = was ? engineTransport : yt
+  const to = on ? engineTransport : yt
+  const at = from.currentTime.value
+  const wasPlaying = from.playing.value
+  from.pause()
+  to.loopA.value = from.loopA.value
+  to.loopB.value = from.loopB.value
+  // the follower leaves the player running a shade off tempo; hand it back straight
+  yt.setRate(tempo.value)
+  lastRate = 0
+  to.seek(at)
+  if (wasPlaying) await to.play()
 })
 
 watch(playing, (on) => {
@@ -336,20 +384,20 @@ watch(playing, (on) => {
 })
 
 /**
- * The picture chases the sound. With the player taking the engine's exact tempo this is
- * only ever a nudge, and above 2x — where the player runs out of rate and cannot help
- * falling behind — the cooldown keeps it from stuttering continuously as it tries.
+ * The picture chases the sound, by running a shade fast or slow rather than by being
+ * seeked: every seek flickers the player's own controls, and a picture a tenth of a second
+ * out is far easier to sit in front of than one that twitches. Only a real jump — a loop
+ * wrapping, a scrub — is too wide to bend away, and only that is seeked.
  */
-let lastResync = 0
 watch(currentTime, (at) => {
   if (!useEngine.value || !yt.playing.value) return
-  if (Math.abs(yt.currentTime.value - at) <= DRIFT) return
-  if (performance.now() - lastResync < RESYNC_COOLDOWN * 1000) return
-  lastResync = performance.now()
-  yt.seek(at)
+  const error = at - yt.currentTime.value
+  if (Math.abs(error) > JUMP) return (lastRate = 0), yt.seek(at)
+  const rate = followRate(tempo.value, error)
+  if (Math.abs(rate - lastRate) < RATE_EPSILON) return
+  lastRate = rate
+  yt.setRate(rate)
 })
-
-watch(tempo, (v) => useEngine.value && (yt.tempo.value = v))
 
 // --- persistence -------------------------------------------------------------------
 
@@ -386,6 +434,7 @@ async function pickFile(file: File) {
   try {
     // a file with no video behind it still needs somewhere to play, so the pane keeps
     // whatever is loaded and simply swaps the audio underneath it
+    foreignAudio.value = true
     await activate(await fromFile(file), currentState())
     status.value = ''
   } catch {
@@ -504,7 +553,7 @@ const shownStatus = computed(() => error.value || status.value)
       v-model:gainDb="gainDb"
       v-model:view="view"
       v-model:loopOpen="loopOpen"
-      :can="active.can"
+      :can="can"
       :playing="playing"
       :currentTime="currentTime"
       :duration="duration"
