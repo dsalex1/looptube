@@ -28,7 +28,10 @@ export default defineConfig({
   plugins: [
     vue(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // prompt, not autoUpdate: a silent swap gives the user no way to know a new build
+      // landed, and an installed app may never close long enough for one to take over
+      registerType: 'prompt',
+      injectRegister: null, // useAppUpdate registers it, so it can hold the callbacks
       includeAssets: ['apple-touch-icon.png'],
       manifest: {
         name: 'LoopTube',

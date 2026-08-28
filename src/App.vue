@@ -5,6 +5,7 @@ import RecentGrid from '@/components/RecentGrid.vue'
 import Settings from '@/components/Settings.vue'
 import Stage from '@/components/Stage.vue'
 import StartPage from '@/components/StartPage.vue'
+import { installUpdate, updateReady } from '@/composables/useAppUpdate'
 import { separate, type StemPhase } from '@/helpers/stems'
 import { useAudioEngine } from '@/composables/useAudioEngine'
 import { useYouTubePlayer } from '@/composables/useYouTubePlayer'
@@ -509,6 +510,10 @@ const build = __BUILD__
       <button v-if="id" class="icon" :class="{ 'icon--ok': copied }" title="Copy a link to this loop" @click="share">
         <Icon name="link" stroke />
       </button>
+      <!-- only ever on screen when a new build is genuinely waiting -->
+      <button v-if="updateReady" class="update" title="Reload onto the new version" @click="installUpdate()">
+        <Icon name="download" stroke /><span>Update</span>
+      </button>
       <button class="icon" title="Settings" @click="settingsOpen = true"><Icon name="gear" stroke /></button>
     </header>
 
@@ -607,6 +612,22 @@ const build = __BUILD__
 }
 .brand { display: flex; align-items: center; gap: 7px; color: #f59e0b; font-weight: 600; font-size: 14px; }
 .brand__name { display: flex; flex-direction: column; line-height: 1.15; }
+.update {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: #f59e0b;
+  color: #1a1200;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.update svg { width: 14px; height: 14px; }
 .brand .version { font-size: 10px; font-weight: 500; color: #6b6b6b; font-variant-numeric: tabular-nums; }
 /* min-width:0 or the form refuses to shrink past its basis and shoves the last
    buttons off the side of a phone */

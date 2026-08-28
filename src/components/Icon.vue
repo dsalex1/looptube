@@ -17,6 +17,7 @@ const PATHS: Record<string, string> = {
   mic: 'M12 2a3 3 0 013 3v6a3 3 0 01-6 0V5a3 3 0 013-3zM6 11a6 6 0 0012 0M12 17v4',
   guitar: 'M7.5 12.5a4.5 4.5 0 100 9 4.5 4.5 0 000-9zM12 10.5a3 3 0 100 6 3 3 0 000-6zM14.2 11.3l4.3-4.3M17.9 5.6l2-2 2.5 2.5-2 2z',
   drum: 'M4 9c0-2.2 3.6-4 8-4s8 1.8 8 4-3.6 4-8 4-8-1.8-8-4zM4 9v6c0 2.2 3.6 4 8 4s8-1.8 8-4V9',
+  download: 'M12 3v11m0 0l-4-4m4 4l4-4M4 19h16',
   note: 'M9 18V6l11-2v10M9 18a2 2 0 11-4 0 2 2 0 014 0zm11-2a2 2 0 11-4 0 2 2 0 014 0z',
 }
 defineProps<{ name: keyof typeof PATHS | string; stroke?: boolean }>()
