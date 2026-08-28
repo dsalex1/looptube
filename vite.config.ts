@@ -7,12 +7,13 @@ import { VitePWA } from 'vite-plugin-pwa'
 // GitHub Pages serves this repo from /docs on the project path, so assets need that base
 const base = process.env.PAGES_BASE ?? '/looptube/'
 
-// a build stamp the running app can show, so "what am I on" has an answer: short commit
-// plus the day it was built. Falls back to "dev" outside a git checkout.
+// a build stamp the running app can show, so "what am I on" has an answer. The commit
+// count is the version: it only ever goes up, so two builds can be told apart at a glance
+// in a way a hash cannot. Falls back to "dev" outside a git checkout.
 const build = (() => {
   const day = new Date().toISOString().slice(0, 10)
   try {
-    return `${execSync('git rev-parse --short HEAD').toString().trim()} · ${day}`
+    return `v${execSync('git rev-list --count HEAD').toString().trim()} · ${day}`
   } catch {
     return `dev · ${day}`
   }
