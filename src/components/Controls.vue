@@ -30,7 +30,7 @@ const emit = defineEmits<{
   (e: 'skip', seconds: number): void
   (e: 'jumpMarker', direction: -1 | 1): void
   (e: 'setLoop', which: 'a' | 'b'): void
-  (e: 'nudgeLoop', direction: -1 | 1): void
+  (e: 'stepLoop', direction: -1 | 1): void
   (e: 'scaleLoop', factor: number): void
   (e: 'seek', seconds: number): void
   (e: 'setStemVolume', name: string, value: number): void
@@ -192,8 +192,8 @@ const pitchHint = computed(() =>
       </div>
 
       <div class="group">
-        <button class="btn" :disabled="!hasLoop" aria-label="Nudge earlier" @click="emit('nudgeLoop', -1)">◀</button>
-        <button class="btn" :disabled="!hasLoop" aria-label="Nudge later" @click="emit('nudgeLoop', 1)">▶</button>
+        <button class="btn" :disabled="!hasLoop" aria-label="Step back one selection" @click="emit('stepLoop', -1)">◀</button>
+        <button class="btn" :disabled="!hasLoop" aria-label="Step forward one selection" @click="emit('stepLoop', 1)">▶</button>
         <button class="btn" :disabled="!hasLoop" aria-label="Halve the loop" @click="emit('scaleLoop', 0.5)">½</button>
         <button class="btn" :disabled="!hasLoop" aria-label="Double the loop" @click="emit('scaleLoop', 2)">x2</button>
       </div>

@@ -21,7 +21,6 @@ import { computed, nextTick, onMounted, ref, watch, type Ref } from 'vue'
 const SNAP = 1 // A/B snaps to a marker this close
 const MARKER_HIT = 0.3 // pressing the marker button this close to one removes it instead
 const DEFAULT_SPAN = 30 // seconds visible in the zoomed view
-const NUDGE = 0.025 // seconds a single arrow press moves a loop point
 
 const id = ref('')
 const title = ref('')
@@ -323,18 +322,14 @@ function setLoop(which: 'a' | 'b', seconds = currentTime.value) {
   }
 }
 
-function keepLoopOrdered() {
+/** step the whole selection one selection-length forward or back, so you can walk the track */
+function stepLoop(direction: -1 | 1) {
   const t = active.value
-  if (t.loopA.value != null && t.loopB.value != null && t.loopB.value <= t.loopA.value)
-    t.loopA.value = Math.max(0, t.loopB.value - NUDGE)
-}
-
-function nudgeLoop(direction: -1 | 1) {
-  const t = active.value
-  const delta = direction * NUDGE
-  if (t.loopA.value != null) t.loopA.value = Math.max(0, t.loopA.value + delta)
-  if (t.loopB.value != null) t.loopB.value = Math.min(duration.value, t.loopB.value + delta)
-  keepLoopOrdered()
+  if (t.loopA.value == null || t.loopB.value == null) return
+  const length = t.loopB.value - t.loopA.value
+  const start = Math.max(0, Math.min(t.loopA.value + direction * length, duration.value - length))
+  t.loopA.value = start
+  t.loopB.value = start + length
 }
 
 /** halve or double the selection, keeping A where it is */
@@ -342,7 +337,6 @@ function scaleLoop(factor: number) {
   const t = active.value
   if (t.loopA.value == null || t.loopB.value == null) return
   t.loopB.value = Math.min(duration.value, t.loopA.value + (t.loopB.value - t.loopA.value) * factor)
-  keepLoopOrdered()
 }
 
 function clearLoop() {
@@ -575,7 +569,7 @@ const shownStatus = computed(() => error.value || status.value)
       @marker="toggleMarker"
       @jumpMarker="jumpMarker"
       @setLoop="setLoop"
-      @nudgeLoop="nudgeLoop"
+      @stepLoop="stepLoop"
       @scaleLoop="scaleLoop"
       @clearLoop="clearLoop"
     />
