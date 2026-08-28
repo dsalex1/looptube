@@ -30,6 +30,27 @@ export function useYouTubePlayer(host: () => HTMLElement | undefined): Transport
 
   const looping = () => loopEnabled.value && loopA.value != null && loopB.value != null
 
+  /**
+   * Force subtitles off.
+   *
+   * The embed inherits the account's "always show captions" preference, and `controls: 0`
+   * takes away the CC button that would turn them back off — so they come on by themselves
+   * and cannot be dismissed. `cc_load_policy: 0` only means "do not force them on", which
+   * does not undo the preference; unloading the module does. The module is named `captions`
+   * on the HTML5 player and `cc` on the old one, and unloading one that was never loaded
+   * throws, so both are tried and neither is trusted. It is re-applied on every start
+   * because the module is loaded lazily with playback and again for each new video.
+   */
+  function hideCaptions(target: YT.Player) {
+    for (const module of ['captions', 'cc']) {
+      try {
+        target.unloadModule(module)
+      } catch {
+        /* not loaded on this player: nothing to unload */
+      }
+    }
+  }
+
   function tick() {
     if (!player) return
     const at = player.getCurrentTime?.() ?? 0
@@ -65,23 +86,27 @@ export function useYouTubePlayer(host: () => HTMLElement | undefined): Transport
     if (player) {
       player.loadVideoById(videoId)
       player.pauseVideo()
+      hideCaptions(player)
       return
     }
 
     player = new api.Player(element, {
       videoId,
-      playerVars: { rel: 0, modestbranding: 1, playsinline: 1, controls: 0, disablekb: 1 },
+      playerVars: { rel: 0, modestbranding: 1, playsinline: 1, controls: 0, disablekb: 1, cc_load_policy: 0 },
       events: {
         onReady: (e) => {
           loading.value = false
           duration.value = e.target.getDuration()
           e.target.setPlaybackRate(clampRate(tempo.value))
           e.target.setVolume(volumeOf(gainDb.value))
+          hideCaptions(e.target)
         },
         onStateChange: (e) => {
           playing.value = e.data === api.PlayerState.PLAYING
-          if (playing.value) startTicking()
-          else stopTicking()
+          if (playing.value) {
+            hideCaptions(e.target)
+            startTicking()
+          } else stopTicking()
           if (e.data === api.PlayerState.ENDED) currentTime.value = duration.value
           if (!duration.value) duration.value = e.target.getDuration()
         },

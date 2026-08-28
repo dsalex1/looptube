@@ -25,3 +25,11 @@ interface Window {
   YT: typeof YT
   onYouTubeIframeAPIReady?: () => void
 }
+
+// Undocumented but long-lived, and the only way to turn subtitles off from the API.
+// @types/youtube ships the documented surface only, so it is declared here.
+declare namespace YT {
+  interface Player {
+    unloadModule(module: string): void
+  }
+}
