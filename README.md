@@ -197,6 +197,30 @@ npm run dev
 npm test
 ```
 
+### Measuring sync
+
+The waveform, the muted video and the sound all have to agree with each other, and none of
+that is visible in a screenshot, so it is measured:
+
+```bash
+npm run dev
+node scripts/__test-sync-collector.mjs
+```
+
+then open `/looptube/__test-sync-lab.html` and press run — or, headlessly, launch Chrome
+with `--autoplay-policy=no-user-gesture-required` at
+`/looptube/__test-sync-lab.html?auto=1&post=http://localhost:8899/`.
+
+The lab plays a generated track carrying one tone burst per whole second, each at its own
+pitch, so a burst names the second it belongs to however the time-stretcher has mangled
+the spacing. `public/__test-sync-tap.js` reports from the **audio thread** when each burst
+actually reached the graph; the page compares that against what the playhead read at the
+same instant. A positive `atSpeakerMs` means the playhead runs ahead of the sound.
+
+`/looptube/__test-yt-rate.html` asks the iframe player which playback rates it really
+honours, as opposed to the ladder it advertises. `npm test` covers the video-follow
+arithmetic on its own.
+
 The PWA icons are generated rather than checked in as art nobody can edit:
 
 ```bash
@@ -228,5 +252,7 @@ Point the app at your own worker under the gear icon; it defaults to the deploye
   "Access blocked" to datacenter requests.
 - Very long videos may exceed the Worker subrequest budget, since the audio is pulled in
   chunks. Songs are fine; a three-hour livestream is not.
+- Above 2x the iframe player runs out of playback rate, so the picture cannot keep up with
+  the audio and is pulled back into place every half second or so. The waveform stays exact.
 - Only extraction is proxied. Playback stays in YouTube's own embedded player, so views
   and ads are served normally.
