@@ -34,12 +34,12 @@ defineEmits<{ setVolume: [name: string, value: number]; mute: [name: string] }>(
 
 <style scoped>
 .mixer { display: flex; flex-direction: column; gap: 7px; }
-.row { display: flex; align-items: center; gap: 12px; }
+.row { display: flex; align-items: center; gap: 9px; }
 .lbl {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 92px;
+  width: 70px;
   flex: none;
   padding: 0;
   background: none;

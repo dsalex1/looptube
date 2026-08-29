@@ -401,6 +401,7 @@ const pitchHint = computed(() =>
   left: 12px;
   right: 12px;
   bottom: calc(100% + 8px);
+  max-width: 250px; /* the faders stop being readable long before the screen ends */
   z-index: 5;
   padding: 11px 13px;
   border: 1px solid #2c2c2c;
