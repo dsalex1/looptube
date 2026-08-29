@@ -32,7 +32,9 @@ export function useAudioEngine() {
   // new gain vector down the wire, and the one shifter still does tempo and pitch on the
   // blend. The waveform is the same blend, approximated from per-stem peaks so it tracks
   // the faders without keeping the samples around after they are handed off.
-  const STEM_ORDER = ['vocals', 'guitars', 'bass', 'drums', 'other'] // display + channel order
+  const STEM_ORDER = ['vocals', 'guitars', 'bass', 'drums', 'other', 'metronome'] // display + channel order
+  /** the click is an addition to the recording rather than a part of it, so it starts off */
+  const SILENT = new Set(['metronome'])
   const stemNames = ref<string[]>([]) // the stems present, in display order
   const stemVolume = ref<Record<string, number>>({}) // 0..1 per stem
   const stemPeaks = ref<Uint8Array>(new Uint8Array()) // peaks of the current blend, for the waveform
@@ -180,7 +182,8 @@ export function useAudioEngine() {
       stemPeaksPer.set(name, computePeaks(buf))
     }
     stemNames.value = STEM_ORDER.filter((n) => stemBuffers.has(n))
-    stemVolume.value = Object.fromEntries(stemNames.value.map((n) => [n, 1]))
+    stemVolume.value = Object.fromEntries(stemNames.value.map((n) => [n, SILENT.has(n) ? 0 : 1]))
+    for (const name of SILENT) stemPrevVolume.set(name, 1) // so un-muting it lands at full
     recomputeStemPeaks()
 
     // switch playback from the whole-track buffer to the stem blend, holding the playhead

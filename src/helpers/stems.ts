@@ -18,8 +18,22 @@ export type StemName = (typeof STEM_NAMES)[number]
 
 // A stem's glyph and its readable name. Both the mixer and the button that opens it draw
 // the same set, which is the whole point: the button is a small copy of what is inside.
-const ICONS: Record<string, string> = { vocals: 'mic', guitars: 'guitar', bass: 'note', drums: 'drum', other: 'wave' }
-const LABELS: Record<string, string> = { vocals: 'Vocals', guitars: 'Guitar', bass: 'Bass', drums: 'Drums', other: 'Other' }
+const ICONS: Record<string, string> = {
+  vocals: 'mic',
+  guitars: 'guitar',
+  bass: 'note',
+  drums: 'drum',
+  other: 'wave',
+  metronome: 'drum',
+}
+const LABELS: Record<string, string> = {
+  vocals: 'Vocals',
+  guitars: 'Guitar',
+  bass: 'Bass',
+  drums: 'Drums',
+  other: 'Other',
+  metronome: 'Click',
+}
 export const stemIcon = (name: string) => ICONS[name] ?? 'wave'
 export const stemLabel = (name: string) => LABELS[name] ?? name
 
@@ -29,7 +43,8 @@ const POLL_TIMEOUT_MS = 5 * 60_000
 // The slow part is the separation, not the download, and Moises' stem URLs are immutable,
 // so once a video is split its URLs are remembered per id. A stale URL (rare) just 404s on
 // download, which drops the entry and re-splits — so the cache never wedges a video.
-const CACHE_KEY = 'looptube:stems'
+// bumped when the click was added, so a video split before it does not stay without one
+const CACHE_KEY = 'looptube:stems2'
 type StemUrls = Record<string, string>
 type Cache = Record<string, { stems: StemUrls; at: number }>
 

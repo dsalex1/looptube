@@ -479,7 +479,11 @@ async function startSeparation(token, audioBytes, name, stems) {
     'mutation($f:FileInput!,$o:[OperationInput]){createTask(file:$f,operations:$o)}',
     {
       f: { provider: 'FILESYSTEM', tempLocation: uploadFile.tempLocation, name, input: `${name}.audio` },
-      o: [{ name: 'SEPARATE_CUSTOM', params: { stems } }],
+      // the beat pass costs nothing extra here and renders a click on the beats it finds
+      o: [
+        { name: 'SEPARATE_CUSTOM', params: { stems } },
+        { name: 'BEATSCHORDS_A', params: {} },
+      ],
     },
   )
   return createTask
@@ -490,9 +494,15 @@ async function separationStatus(token, taskId) {
   const { track } = await moisesGql(token, 'query($id:String!){track(id:$id){operations{name status files}}}', {
     id: taskId,
   })
-  const op = track?.operations?.find((o) => o.name === 'SEPARATE_CUSTOM')
+  const operations = track?.operations ?? []
+  const op = operations.find((o) => o.name === 'SEPARATE_CUSTOM')
   if (!op) return { status: 'PENDING' } // the row exists a beat before its operation does
-  return { status: op.status, files: op.files }
+  if (op.status !== 'COMPLETED') return { status: op.status, files: op.files }
+  // the click arrives with the beat pass, which can finish after the separation does
+  const beats = operations.find((o) => o.name === 'BEATSCHORDS_A')
+  if (beats && !['COMPLETED', 'FAILED', 'ERROR'].includes(beats.status)) return { status: 'RUNNING' }
+  const metronome = beats?.files?.metronome
+  return { status: op.status, files: metronome ? { ...op.files, metronome } : op.files }
 }
 
 /** Drain a ReadableStream into one Uint8Array. */
@@ -533,6 +543,47 @@ async function sourceBytes(env, id) {
   }
 }
 
+/* --------------------------------------------------------------------- search ----- */
+
+/**
+ * Finding a video by name, for callers that have a song title rather than a link. The
+ * results page carries everything needed in its `ytInitialData`, so this reads that
+ * instead of the Data API - no key, and no daily quota to run out of mid-rehearsal.
+ */
+function collectVideos(node, into) {
+  if (!node || typeof node !== 'object') return into
+  if (Array.isArray(node)) {
+    for (const item of node) collectVideos(item, into)
+    return into
+  }
+  const video = node.videoRenderer
+  if (video?.videoId && video.title?.runs?.[0]?.text) {
+    into.push({
+      id: video.videoId,
+      title: video.title.runs[0].text,
+      channel: video.ownerText?.runs?.[0]?.text ?? video.longBylineText?.runs?.[0]?.text ?? '',
+      duration: video.lengthText?.simpleText ?? '',
+      thumbnail: video.thumbnail?.thumbnails?.[0]?.url ?? '',
+    })
+  }
+  for (const value of Object.values(node)) collectVideos(value, into)
+  return into
+}
+
+async function search(query) {
+  const response = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&hl=en&gl=US`, {
+    // without a consent cookie some regions get an interstitial instead of results
+    headers: { 'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9', Cookie: 'CONSENT=YES+1' },
+  })
+  const html = await response.text()
+  const match = html.match(/ytInitialData\s*=\s*(\{.+?\})\s*;\s*<\/script>/s)
+  if (!match) throw new Error('youtube returned no results block')
+  const results = collectVideos(JSON.parse(match[1]), [])
+  // the same video shows up in more than one shelf
+  const seen = new Set()
+  return results.filter((v) => !seen.has(v.id) && seen.add(v.id)).slice(0, 20)
+}
+
 /* -------------------------------------------------------------------- handler ----- */
 
 
@@ -553,7 +604,21 @@ export default {
 
     if (url.pathname === '/' || url.pathname === '/health')
 
-      return json({ ok: true, service: 'looptube-audio', endpoints: ['/meta?v=', '/audio?v=', '/diag?v=', '/upstream', '/stems'] })
+      return json({
+        ok: true,
+        service: 'looptube-audio',
+        endpoints: ['/meta?v=', '/audio?v=', '/diag?v=', '/search?q=', '/upstream', '/stems'],
+      })
+
+    if (url.pathname === '/search') {
+      const query = url.searchParams.get('q')
+      if (!query) return json({ error: 'q is required' }, 400)
+      try {
+        return json({ results: await search(query) })
+      } catch (e) {
+        return json({ error: String(e.message ?? e) }, 502)
+      }
+    }
 
 
 
