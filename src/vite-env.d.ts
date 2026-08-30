@@ -10,30 +10,6 @@ declare module '*.vue' {
   export default component
 }
 
-// the package ships JS only; this is the slice of its documented surface the engine uses
-declare module 'signalsmith-stretch' {
-  export interface StretchNode extends AudioWorkletNode {
-    /** how far it has read into its input buffers; unused in live-input mode */
-    readonly inputTime: number
-    schedule(change: {
-      output?: number
-      active?: boolean
-      rate?: number
-      semitones?: number
-      loopStart?: number
-      loopEnd?: number
-    }): Promise<unknown>
-    start(when?: number): Promise<unknown>
-    stop(when?: number): Promise<unknown>
-    /** seconds it adds on the way through, in live-input mode */
-    latency(): Promise<number>
-  }
-  export default function SignalsmithStretch(
-    context: BaseAudioContext,
-    options?: AudioWorkletNodeOptions
-  ): Promise<StretchNode>
-}
-
 interface Window {
   YT: typeof YT
   onYouTubeIframeAPIReady?: () => void

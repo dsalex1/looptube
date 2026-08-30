@@ -1,6 +1,6 @@
 import { computed, onUnmounted, ref, watch } from 'vue'
+import { stretchFactory, type StretchNode } from '@/audio/signalsmith'
 import { computePeaks } from '@/helpers/audioPeaks'
-import SignalsmithStretch, { type StretchNode } from 'signalsmith-stretch'
 
 /** what a worklet is handed per call, and so how far its output trails the playhead */
 const RENDER_QUANTUM = 128
@@ -245,7 +245,8 @@ export function useAudioEngine() {
 
   /** built on first use, so a track played straight through never pays for the WASM */
   function ensureStretch() {
-    return (stretchPending ??= SignalsmithStretch(audioContext())
+    return (stretchPending ??= stretchFactory()
+      .then((create) => create(audioContext()))
       .then(async (node) => {
         node.connect(output())
         node.start()
