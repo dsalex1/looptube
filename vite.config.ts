@@ -69,6 +69,13 @@ export default defineConfig({
     }),
   ],
   define: { __BUILD__: JSON.stringify(build) },
+  // Signalsmith builds its worklet by stringifying its own source into a Blob, so anything
+  // that lowers the class fields in it lowers them into `__publicField` helpers that do not
+  // exist in worklet scope - the processor then dies on load and the node never becomes
+  // ready. The dev dep optimiser does exactly that, so it is kept away from it. The
+  // production build targets modern browsers and leaves the fields alone; if the build
+  // target is ever lowered, check `__publicField` has not appeared in the bundle.
+  optimizeDeps: { exclude: ['signalsmith-stretch'] },
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   build: { outDir: 'docs', emptyOutDir: true },
   test: { environment: 'happy-dom' },

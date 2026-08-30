@@ -170,7 +170,7 @@ wrangler secret put MOISES_PASSWORD
 ```
 src/               the app (Vue 3 + Vite, static, no backend)
   composables/
-    useAudioEngine.ts     vendored from asla — Web Audio + soundtouchjs
+    useAudioEngine.ts     vendored from asla — Web Audio + Signalsmith Stretch
     useYouTubePlayer.ts   the IFrame player wearing the same interface
   components/
     WaveformCanvas.vue    vendored from asla

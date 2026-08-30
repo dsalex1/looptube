@@ -5,8 +5,8 @@ export type Reading = { at: number; level: number }
 /**
  * How far the measured signal is running behind the playhead, in track seconds.
  *
- * The delay comes from the pitch shifter, which is a ScriptProcessor running on the
- * main thread: it depends on the device, the buffer and how busy the page is, so it
+ * The delay comes from the output buffer and, when a capo or a tempo is on, from the
+ * stretcher's own block: it depends on the device and how busy the page is, so it
  * cannot be assumed. What it can be measured against is the signal ahead of the
  * limiter, which is just the source scaled by the gain and so has a shape we already
  * know. Sliding the readings against the stored peaks and taking the best match gives

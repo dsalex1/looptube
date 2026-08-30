@@ -63,10 +63,13 @@ function testTrackUrl() {
   return URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }))
 }
 
-// The engine builds its own context and its own shifter and hands out neither, so both
-// are caught on the way past: the tap has to sit on that same graph to measure it.
+// The engine builds its own context and its own graph and hands out neither, so both are
+// caught on the way past: the tap has to sit on that same graph to measure it. The limiter
+// is the last node before the speakers and there is exactly one, which makes it the honest
+// place to listen — everything the engine does to the sound is already in it, including
+// the stretcher's own latency when the mix is routed through it.
 let context: AudioContext | null = null
-let shifter: AudioWorkletNode | null = null
+let outputNode: DynamicsCompressorNode | null = null
 const NativeContext = window.AudioContext
 const NativeWorkletNode = window.AudioWorkletNode
 window.AudioContext = class extends NativeContext {
@@ -74,11 +77,8 @@ window.AudioContext = class extends NativeContext {
     super(options)
     context = this
   }
-}
-window.AudioWorkletNode = class extends NativeWorkletNode {
-  constructor(ctx: BaseAudioContext, name: string, options?: AudioWorkletNodeOptions) {
-    super(ctx, name, options)
-    if (name === 'soundtouch-processor') shifter = this
+  createDynamicsCompressor() {
+    return (outputNode = super.createDynamicsCompressor())
   }
 }
 
@@ -89,14 +89,14 @@ let onsets: Onset[] = []
 let tap: AudioWorkletNode | null = null
 
 async function attachTap() {
-  if (!context || !shifter) throw new Error('the engine never built its graph')
+  if (!context || !outputNode) throw new Error('the engine never built its graph')
   if (!tap) {
     await context.audioWorklet.addModule(`${import.meta.env.BASE_URL}__test-sync-tap.js`)
     tap = new NativeWorkletNode(context, 'sync-tap')
     tap.port.onmessage = ({ data }) => onsets.push(data)
     tap.connect(context.destination)
+    outputNode.connect(tap)
   }
-  shifter.connect(tap) // pause() disconnects everything, so this is re-done every run
 }
 
 /** (context time, what the UI would have drawn) sampled per frame, for interpolation */
