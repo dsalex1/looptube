@@ -110,7 +110,9 @@ watch([gainDb, useEngine], ([v, on]) => {
   yt.gainDb.value = on ? -60 : Math.min(v, 0)
 }, { immediate: true })
 
-// --- stems: once real audio is playing, split it and offer the parts as mute toggles ----
+// --- stems: asked for by hand from Settings, then offered as faders and mute toggles ----
+// Not automatic: a split costs a separation for every video that is merely opened, so it
+// waits to be asked for and the ask is kept off the transport bar.
 const stemPhase = ref<StemPhase | ''>('')
 const stemNames = computed(() => engine.stemNames.value)
 const stemVolume = computed(() => engine.stemVolume.value)
@@ -123,13 +125,16 @@ function resetStems() {
   engine.clearStems()
 }
 
-async function separateStems(forId: string, name: string) {
+async function separateStems(requested: string[]) {
+  const forId = id.value
+  const name = title.value || forId
+  settingsOpen.value = false
   resetStems()
   const controller = new AbortController()
   stemController = controller
   const mine = () => stemController === controller && id.value === forId
   try {
-    const bytes = await separate(forId, name, (p) => mine() && (stemPhase.value = p), controller.signal)
+    const bytes = await separate(forId, name, requested, (p) => mine() && (stemPhase.value = p), controller.signal)
     if (!mine()) return
     await engine.setStems(bytes) // engine.stemPeaks now drives the waveform (watch below)
     stemPhase.value = ''
@@ -214,8 +219,6 @@ async function fetchAudio(forId: string, state: LoopState) {
     noteRecent({ id: forId, title: result.title, duration: result.duration })
     void refreshOffline()
     status.value = ''
-    // real audio is now playing; split it in the background and offer the parts as toggles
-    if (result.audioUrl) void separateStems(forId, result.title ?? forId)
   } catch (e) {
     if (token !== fetchToken) return
     console.warn('Audio service failed:', e)
@@ -302,8 +305,13 @@ function moveMarker(index: number, seconds: number) {
   markers.value = markers.value.map((m, i) => (i === index ? seconds : m)).sort((a, b) => a - b)
 }
 
+/** A and B are places you want to get back to as much as any marker, so they are targets too */
+const jumpTargets = computed(() =>
+  [...markers.value, loopA.value, loopB.value].filter((t): t is number => t != null).sort((a, b) => a - b)
+)
+
 function jumpMarker(direction: -1 | 1) {
-  const candidates = markers.value.filter((m) => (direction < 0 ? m < currentTime.value - 0.3 : m > currentTime.value))
+  const candidates = jumpTargets.value.filter((m) => (direction < 0 ? m < currentTime.value - 0.3 : m > currentTime.value))
   const target = direction < 0 ? candidates[candidates.length - 1] : candidates[0]
   active.value.seek(target ?? (direction < 0 ? 0 : duration.value))
 }
@@ -595,7 +603,15 @@ const build = __BUILD__
       </div>
     </div>
 
-    <Settings v-if="settingsOpen" :hasRealAudio="!isSynthetic" @close="settingsOpen = false" />
+    <Settings
+      v-if="settingsOpen"
+      :hasRealAudio="!isSynthetic"
+      :canSplit="!!id && !foreignAudio && !isSynthetic"
+      :stemNames="stemNames"
+      :stemPhase="stemPhase"
+      @close="settingsOpen = false"
+      @split="separateStems"
+    />
   </div>
 </template>
 

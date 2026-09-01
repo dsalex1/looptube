@@ -1,10 +1,26 @@
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue'
 import { DEFAULT_SERVICE, serviceUrl, setServiceUrl } from '@/helpers/peaksSource'
-import { ref } from 'vue'
+import {
+  MAX_STEMS,
+  METRONOME,
+  rememberedPicks,
+  rememberPicks,
+  SPLITTABLE,
+  stemIcon,
+  stemLabel,
+  type StemPhase,
+} from '@/helpers/stems'
+import { computed, ref } from 'vue'
 
-defineProps<{ hasRealAudio: boolean }>()
-const emit = defineEmits<{ (e: 'close'): void }>()
+const props = defineProps<{
+  hasRealAudio: boolean
+  /** a video whose audio the separator can resolve: not a picked file, not a flat bed */
+  canSplit: boolean
+  stemNames: string[]
+  stemPhase: StemPhase | ''
+}>()
+const emit = defineEmits<{ (e: 'close'): void; (e: 'split', requested: string[]): void }>()
 
 const service = ref(serviceUrl())
 const build = __BUILD__
@@ -12,6 +28,22 @@ const build = __BUILD__
 function saveService() {
   setServiceUrl(service.value)
   emit('close')
+}
+
+// --- stems, kept down here on purpose: a split is minutes of somebody's separation quota,
+// so it is something you go and ask for rather than something a stray tap sets going ---
+const picked = ref<string[]>(rememberedPicks())
+const instruments = computed(() => picked.value.filter((n) => n !== METRONOME))
+const running = computed(() => props.stemPhase === 'separating' || props.stemPhase === 'downloading')
+const tooMany = computed(() => instruments.value.length > MAX_STEMS)
+const canStart = computed(() => props.canSplit && instruments.value.length > 0 && !tooMany.value && !running.value)
+
+const toggle = (name: string) =>
+  (picked.value = picked.value.includes(name) ? picked.value.filter((n) => n !== name) : [...picked.value, name])
+
+function startSplit() {
+  rememberPicks(picked.value)
+  emit('split', picked.value)
 }
 </script>
 
@@ -37,6 +69,50 @@ function saveService() {
         <div class="actions">
           <button class="btn" @click="service = DEFAULT_SERVICE">Reset to default</button>
           <button class="btn btn--primary" @click="saveService">Save</button>
+        </div>
+      </section>
+
+      <section>
+        <h3>Stems</h3>
+        <p class="why">
+          Pick the parts to isolate and this track is separated into them, so each one gets its own fader in the
+          transport bar. Everything left over stays in the mix as "Other", so with nothing muted it still sounds like
+          the untouched track. A separation takes a few minutes and is done once per video.
+        </p>
+
+        <div class="chips">
+          <button
+            v-for="name in SPLITTABLE"
+            :key="name"
+            class="chip"
+            :class="{ 'chip--on': picked.includes(name) }"
+            :aria-pressed="picked.includes(name)"
+            @click="toggle(name)"
+          >
+            <Icon :name="stemIcon(name)" stroke />{{ stemLabel(name) }}
+          </button>
+        </div>
+
+        <div class="chips">
+          <button
+            class="chip"
+            :class="{ 'chip--on': picked.includes(METRONOME) }"
+            :aria-pressed="picked.includes(METRONOME)"
+            @click="toggle(METRONOME)"
+          >
+            <Icon :name="stemIcon(METRONOME)" stroke />{{ stemLabel(METRONOME) }}
+          </button>
+        </div>
+        <p class="hint">A click on the beats found in the recording — it does not count towards the {{ MAX_STEMS }}.</p>
+
+        <p v-if="tooMany" class="note">At most {{ MAX_STEMS }} instruments per split.</p>
+        <p v-else-if="!canSplit" class="note">Open a video and let its audio load first.</p>
+        <p v-else-if="stemPhase === 'failed'" class="note">That split did not come back — try again.</p>
+
+        <div class="actions">
+          <button class="btn btn--primary" :disabled="!canStart" @click="startSplit">
+            {{ running ? (stemPhase === 'downloading' ? 'Loading stems…' : 'Separating…') : stemNames.length ? 'Split again' : 'Split' }}
+          </button>
         </div>
       </section>
 
@@ -81,6 +157,23 @@ input[type='url'] {
   color: #ececec;
   font-size: 13px;
 }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 999px;
+  color: #cfcfcf;
+  font-size: 12px;
+  cursor: pointer;
+}
+.chip--on { background: #f59e0b; border-color: #f59e0b; color: #101010; font-weight: 600; }
+.hint { margin: 0 0 8px; font-size: 11px; color: #6f6f6f; }
+.btn:disabled { opacity: 0.35; cursor: default; }
 .note { margin: 0 0 8px; font-size: 13px; color: #c98b8b; }
 .note--ok { color: #7fc98b; }
 .why { margin: 0 0 10px; font-size: 12px; line-height: 1.5; color: #8a8a8a; }

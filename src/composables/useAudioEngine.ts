@@ -39,7 +39,8 @@ export function useAudioEngine() {
   // the graph sums them, so a fader is a native gain ramp: nothing is re-mixed, nothing is
   // messaged, and the one stretcher downstream still works on the blend. The waveform is
   // that same blend, approximated from per-stem peaks so it tracks the faders.
-  const STEM_ORDER = ['vocals', 'guitars', 'bass', 'drums', 'other', 'metronome'] // display + channel order
+  // display + channel order; anything the separator returns that is not here would be dropped
+  const STEM_ORDER = ['vocals', 'guitars', 'bass', 'drums', 'piano', 'keys', 'wind', 'strings', 'other', 'metronome']
   /** the click is an addition to the recording rather than a part of it, so it starts off */
   const SILENT = new Set(['metronome'])
   const stemNames = ref<string[]>([]) // the stems present, in display order
@@ -346,11 +347,22 @@ export function useAudioEngine() {
   const positionNow = () =>
     baseTrackTime + Math.max(0, audioContext().currentTime - baseContextTime - outputLag()) * tempo.value
 
+  /**
+   * How far ahead of the heard playhead an A-B wrap has to be scheduled, in track seconds:
+   * one output buffer, capped at half the loop so a selection shorter than the buffer
+   * cannot re-trigger on every frame.
+   */
+  const wrapLead = () => Math.min(outputLag() * tempo.value, (loopB.value! - loopA.value!) / 2)
+
   function tick() {
     if (!playing.value) return
     const at = positionNow()
-    // A-B repeat: jump back as soon as the playhead runs past B
-    if (looping() && at >= loopB.value!) seek(loopA.value!)
+    // A-B repeat. The playhead is where the *sound* is, an `outputLag` behind the sources,
+    // and stopping a source cannot un-render what is already in that buffer — so waiting
+    // for it to reach B leaves a whole buffer of past-B audio queued and the wrap lands
+    // that much late. The restart is scheduled off where the sources are instead, so the
+    // last thing queued is B. (asla's playhead *is* the source position, hence no lag there.)
+    if (looping() && at + wrapLead() >= loopB.value!) seek(loopA.value!)
     else if (at >= duration.value) (currentTime.value = duration.value), pause()
     else currentTime.value = at
     frame = requestAnimationFrame(tick)
