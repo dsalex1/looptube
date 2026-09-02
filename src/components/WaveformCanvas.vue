@@ -423,14 +423,21 @@ watch(
 
 // --- pointer interaction ---
 const TAP_SLOP = 4 // a press that moves less than this is a tap, not a drag
+/** how long a flag has to be held before it is picked up rather than jumped to */
+const HOLD_MS = 350
 
 type Drag =
   | { kind: 'seek' }
-  | { kind: 'marker'; index: number }
+  | { kind: 'marker'; index: number; fromX: number; armed: boolean }
   | { kind: 'loop'; which: 'a' | 'b' }
   | { kind: 'pan'; fromX: number; fromPosition: number; moved: boolean }
 
 let drag: Drag | null = null
+let holdTimer: ReturnType<typeof setTimeout> | null = null
+function cancelHold() {
+  if (holdTimer) clearTimeout(holdTimer)
+  holdTimer = null
+}
 const pointers = new Map<number, number>() // pointerId -> x
 let pinchStart: { distance: number; span: number } | null = null
 
@@ -447,7 +454,7 @@ function hitTest(x: number, y: number): Drag {
   }
   if (y <= 4 + FLAG_H) {
     const index = props.markers.findIndex((m) => x >= xOf(m) && x <= xOf(m) + FLAG_W)
-    if (index >= 0) return { kind: 'marker', index }
+    if (index >= 0) return { kind: 'marker', index, fromX: x, armed: false }
   }
   // on the zoomed view an empty press drags the wave under the centre playhead
   return props.draggable ? { kind: 'pan', fromX: x, fromPosition: props.position, moved: false } : { kind: 'seek' }
@@ -460,6 +467,16 @@ function applyDrag(x: number) {
     if (Math.abs(travelled) > TAP_SLOP) drag.moved = true
     if (drag.moved) emit('seek', clampTime(drag.fromPosition - travelled * secondsPerPixel.value))
     return
+  }
+  if (drag.kind === 'marker' && !drag.armed) {
+    const grabbed = drag
+    if (Math.abs(x - grabbed.fromX) <= TAP_SLOP) return // held still: wait for the hold
+    // it moved first, so this was a scrub that happened to start on a flag, not a grab
+    cancelHold()
+    drag = props.draggable
+      ? { kind: 'pan', fromX: grabbed.fromX, fromPosition: props.markers[grabbed.index], moved: true }
+      : { kind: 'seek' }
+    return applyDrag(x)
   }
   const seconds = clampTime(timeOf(x))
   if (drag.kind === 'seek') emit('seek', seconds)
@@ -478,12 +495,19 @@ function onPointerDown(e: PointerEvent) {
   if (pointers.size === 2) {
     const [a, b] = [...pointers.values()]
     pinchStart = { distance: Math.abs(a - b), span: span.value }
+    cancelHold()
     drag = null
     return
   }
   const rect = wrapper.value!.getBoundingClientRect()
   drag = hitTest(localX(e), e.clientY - rect.top)
-  if (drag.kind !== 'pan') applyDrag(localX(e)) // a pan only acts once it actually moves
+  if (drag.kind === 'marker') {
+    // A press on a flag goes to it; only holding picks it up. Moving on press is what made
+    // a tap meant as "take me back there" knock the marker off the place it was put.
+    emit('seek', clampTime(props.markers[drag.index]))
+    const grabbed = drag
+    holdTimer = setTimeout(() => ((grabbed.armed = true), (holdTimer = null)), HOLD_MS)
+  } else if (drag.kind !== 'pan') applyDrag(localX(e)) // a pan only acts once it actually moves
 }
 
 function onPointerMove(e: PointerEvent) {
@@ -502,7 +526,7 @@ function onPointerUp(e: PointerEvent) {
   if (drag?.kind === 'pan' && !drag.moved) emit('seek', clampTime(timeOf(localX(e))))
   pointers.delete(e.pointerId)
   if (pointers.size < 2) pinchStart = null
-  if (pointers.size === 0) drag = null
+  if (pointers.size === 0) (cancelHold(), (drag = null))
 }
 
 function onWheel(e: WheelEvent) {
