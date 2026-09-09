@@ -464,7 +464,7 @@ export function useAudioEngine() {
 
   return {
     currentTime, duration, playing, loading, error, tempo, pitch, gainDb,
-    loopA, loopB, loopEnabled, limiterCeilingDb, load, play, pause, toggle, seek, skip, levels,
+    loopA, loopB, loopEnabled, limiterCeilingDb, load, play, pause, toggle, seek, skip, levels, outputLag,
     stemNames, stemVolume, stemPeaks, hasStems, setStems, setStemVolume, toggleStemMute, clearStems,
   }
 }

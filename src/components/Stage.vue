@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue'
 import WaveformCanvas from '@/components/WaveformCanvas.vue'
-import type { PaneView } from '@/types'
-import { computed } from 'vue'
+import type { Loop, Marker, PaneView } from '@/types'
+import { onClickOutside } from '@vueuse/core'
+import { computed, ref, watch } from 'vue'
 
 const props = defineProps<{
   view: PaneView
@@ -10,7 +11,8 @@ const props = defineProps<{
   duration: number
   start: number
   end: number
-  markers: number[]
+  markers: Marker[]
+  loops: Loop[]
   loopA: number | null
   loopB: number | null
   loopActive: boolean
@@ -23,12 +25,34 @@ const props = defineProps<{
   progressLabel: string
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'seek', seconds: number): void
   (e: 'moveMarker', index: number, seconds: number): void
   (e: 'moveLoop', which: 'a' | 'b', seconds: number): void
+  (e: 'moveSavedLoop', index: number, which: 'a' | 'b', seconds: number): void
+  (e: 'selectLoop', index: number): void
+  (e: 'patchMarker', index: number, patch: Partial<Marker>): void
   (e: 'zoom', span: number): void
 }>()
+
+// What a held flag should be: somewhere to come back to, or somewhere to jump from.
+// Opened over the flag it was held on, so it belongs to the waveform rather than the bar.
+const markerMenu = ref<{ index: number; x: number } | null>(null)
+const markerMenuAnchor = ref<HTMLElement | null>(null)
+onClickOutside(markerMenuAnchor, () => (markerMenu.value = null))
+watch(() => props.view, () => (markerMenu.value = null))
+
+const held = computed((): Marker | undefined => (markerMenu.value ? props.markers[markerMenu.value.index] : undefined))
+
+const markerName = computed({
+  get: () => held.value?.name ?? '',
+  set: (value: string) => markerMenu.value && emit('patchMarker', markerMenu.value.index, { name: value.trim() }),
+})
+
+function setMarkerKind(skip: boolean) {
+  if (markerMenu.value) emit('patchMarker', markerMenu.value.index, { skip })
+  markerMenu.value = null
+}
 
 const RADIUS = 20
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS
@@ -54,6 +78,7 @@ const percent = computed(() => `${Math.round((props.progress ?? 0) * 100)}%`)
         :start="start"
         :end="end"
         :markers="markers"
+        :loops="loops"
         :loopA="loopA"
         :loopB="loopB"
         :loopActive="loopActive"
@@ -61,8 +86,21 @@ const percent = computed(() => `${Math.round((props.progress ?? 0) * 100)}%`)
         @seek="$emit('seek', $event)"
         @moveMarker="(i, s) => $emit('moveMarker', i, s)"
         @moveLoop="(w, s) => $emit('moveLoop', w, s)"
+        @moveSavedLoop="(i, w, s) => $emit('moveSavedLoop', i, w, s)"
+        @selectLoop="$emit('selectLoop', $event)"
+        @markerMenu="(index, x) => (markerMenu = { index, x })"
         @zoom="$emit('zoom', $event)"
       />
+
+      <div v-if="markerMenu" ref="markerMenuAnchor" class="marker-menu" :style="{ left: `${markerMenu.x}px` }">
+        <input v-model.lazy="markerName" :placeholder="`Marker ${markerMenu.index + 1}`" aria-label="Name this marker" />
+        <button :class="{ on: !held?.skip }" aria-label="Normal marker" @click="setMarkerKind(false)">
+          <Icon name="flag" /> Marker
+        </button>
+        <button :class="{ on: held?.skip }" aria-label="Skip marker" @click="setMarkerKind(true)">
+          <Icon name="skip" /> Skip
+        </button>
+      </div>
       <div v-if="synthetic && progress == null" class="hint">
         <Icon name="wave" stroke />
         <span>No audio samples for this video — markers and A-B still work.</span>
@@ -106,6 +144,47 @@ const percent = computed(() => `${Math.round((props.progress ?? 0) * 100)}%`)
   background: rgba(20, 20, 20, 0.92); color: #b9b9b9; border: 1px solid #2a2a2a;
 }
 .hint svg { flex: none; color: #f59e0b; }
+
+/* over the flag it was opened on, just under the row of flags */
+.marker-menu {
+  position: absolute;
+  top: 34px;
+  z-index: 20;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  transform: translateX(-4px);
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  background: #141414;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 60%);
+  white-space: nowrap;
+}
+.marker-menu input {
+  width: 120px;
+  height: 30px;
+  padding-inline: 8px;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #1d1d1d;
+  color: #e8e8e8;
+  font-size: 13px;
+}
+.marker-menu button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding-inline: 9px;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #1d1d1d;
+  color: #e8e8e8;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.marker-menu button.on { background: #f59e0b; border-color: #f59e0b; color: #111; }
 .status {
   position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
   padding: 6px 14px; border-radius: 999px; font-size: 13px;

@@ -35,14 +35,29 @@ export interface Capabilities {
   tempoMax: number
 }
 
+/**
+ * A place on the track, named or shown by its number. A skip marker is not somewhere to
+ * come back to: playing into one carries on from the next marker.
+ */
+export type Marker = { at: number; name?: string; skip?: boolean }
+
+/** One saved A-B selection. Both bounds are set: it is made from an A-B that had both. */
+export type Loop = { a: number; b: number; name?: string }
+
+/** the clicks counted off before the track comes in */
+export type CountIn = { enabled?: boolean; bpm?: number; beats?: number }
+
 /** Everything worth keeping about one video, keyed by its id. */
 export interface LoopState {
-  markers: number[]
+  markers: Marker[]
+  /** the saved A-B selections; the live A-B is separate and is where you are working now */
+  loops: Loop[]
   loopA: number | null
   loopB: number | null
   tempo: number
   pitch: number
   gainDb: number
+  countIn?: CountIn
   title?: string
 }
 

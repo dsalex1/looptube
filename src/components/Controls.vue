@@ -4,7 +4,7 @@ import JogStrip from '@/components/JogStrip.vue'
 import StemMixer from '@/components/StemMixer.vue'
 import WaveformCanvas from '@/components/WaveformCanvas.vue'
 import { stemIcon, stemLabel, type StemPhase } from '@/helpers/stems'
-import type { Capabilities, PaneView } from '@/types'
+import type { Capabilities, CountIn, Loop, Marker, PaneView } from '@/types'
 import { onBeforeUnmount, onMounted, computed, ref } from 'vue'
 
 const props = defineProps<{
@@ -16,7 +16,13 @@ const props = defineProps<{
   hasLoop: boolean
   /** the whole-track strip under the dials */
   peaks: Uint8Array
-  markers: number[]
+  markers: Marker[]
+  /** the saved loops, and which of them the live A-B is standing on (-1 for none) */
+  loops: Loop[]
+  selectedLoop: number
+  countIn: CountIn
+  /** the clicks are running: the play button offers to call them off */
+  countingIn: boolean
   loopA: number | null
   loopB: number | null
   /** the split of the track, if it has been split; the mixer hides behind one button */
@@ -26,7 +32,11 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'toggle' | 'toStart' | 'marker' | 'clearLoop'): void
+  (e: 'toggle' | 'toStart' | 'marker' | 'clearLoop' | 'saveLoop' | 'deleteLoop'): void
+  (e: 'selectLoop', index: number): void
+  (e: 'moveSavedLoop', index: number, which: 'a' | 'b', seconds: number): void
+  (e: 'renameLoop', name: string): void
+  (e: 'setCountIn', patch: CountIn): void
   (e: 'skip', seconds: number): void
   (e: 'jumpMarker', direction: -1 | 1): void
   (e: 'setLoop', which: 'a' | 'b'): void
@@ -46,6 +56,14 @@ const loopOpen = defineModel<boolean>('loopOpen', { required: true })
 const SKIP = 10
 const MAX_PITCH = 12
 const GAIN_LIMIT = 20
+
+const currentLoop = computed((): Loop | undefined => props.loops[props.selectedLoop])
+const countInOn = computed(() => !!props.countIn.enabled)
+const countInBpm = computed(() => props.countIn.bpm ?? 120)
+const countInBeats = computed(() => props.countIn.beats ?? 4)
+const countInOpen = ref(false)
+const countIn = ref<HTMLElement>()
+const fieldValue = (e: Event) => Number((e.target as HTMLInputElement).value)
 
 const stamp = (seconds: number) => {
   const safe = Math.max(0, seconds || 0)
@@ -88,9 +106,10 @@ const level = (name: string) => props.stemVolume[name] ?? 1
 
 function closeStems(e: Event) {
   if (!stems.value?.contains(e.target as Node)) stemsOpen.value = false
+  if (!countIn.value?.contains(e.target as Node)) countInOpen.value = false
 }
 
-const onEscape = (e: KeyboardEvent) => e.key === 'Escape' && (stemsOpen.value = false)
+const onEscape = (e: KeyboardEvent) => e.key === 'Escape' && ((stemsOpen.value = false), (countInOpen.value = false))
 
 onMounted(() => {
   document.addEventListener('pointerdown', closeStems)
@@ -173,11 +192,14 @@ const pitchHint = computed(() =>
         :start="0"
         :end="duration"
         :markers="markers"
+        :loops="loops"
         :loopA="loopA"
         :loopB="loopB"
         :loopActive="loopOpen"
         :position="currentTime"
         @seek="emit('seek', $event)"
+        @moveSavedLoop="(i, w, s) => emit('moveSavedLoop', i, w, s)"
+        @selectLoop="emit('selectLoop', $event)"
       />
     </div>
 
@@ -189,6 +211,31 @@ const pitchHint = computed(() =>
           <Icon name="close" stroke />
         </button>
         <button class="btn" :class="{ 'btn--on': loopB != null }" @click="emit('setLoop', 'b')">B</button>
+      </div>
+
+      <!-- the list itself is the flags on the strips above, which are what select them;
+           this saves the A-B as another one, and names or drops the one it stands on -->
+      <div class="group">
+        <input
+          class="loop-name"
+          :value="currentLoop?.name ?? ''"
+          :disabled="!currentLoop"
+          :placeholder="currentLoop ? `Loop ${selectedLoop + 1}` : 'No loop'"
+          aria-label="Name this loop"
+          @change="emit('renameLoop', ($event.target as HTMLInputElement).value)"
+        />
+        <button
+          class="btn"
+          aria-label="Save loop"
+          title="Save the A-B as a loop"
+          :disabled="!hasLoop || selectedLoop >= 0"
+          @click="emit('saveLoop')"
+        >
+          <Icon name="plus" stroke />
+        </button>
+        <button class="btn" aria-label="Delete this loop" :disabled="!currentLoop" @click="emit('deleteLoop')">
+          <Icon name="trash" stroke />
+        </button>
       </div>
 
       <div class="group">
@@ -205,6 +252,52 @@ const pitchHint = computed(() =>
         <button class="btn" :class="{ 'btn--on': loopOpen }" aria-label="A-B repeat" @click="loopOpen = !loopOpen">
           A–B
         </button>
+
+        <!-- the clicks counted off before the track comes in -->
+        <div ref="countIn" class="stems">
+          <button
+            class="btn"
+            :class="{ 'btn--on': countInOn }"
+            aria-label="Count-in"
+            :title="countInOn ? `${countInBeats} beats at ${countInBpm} bpm` : 'No count-in'"
+            :aria-expanded="countInOpen"
+            @click="countInOpen = !countInOpen"
+          >
+            <Icon name="timer" stroke />
+          </button>
+          <div v-if="countInOpen" class="popover popover--count">
+            <div class="count-row">
+              <span>Count in</span>
+              <button class="btn" :class="{ 'btn--on': countInOn }" @click="emit('setCountIn', { enabled: !countInOn })">
+                {{ countInOn ? 'On' : 'Off' }}
+              </button>
+            </div>
+            <label class="count-row">
+              <span>Tempo</span>
+              <input
+                type="number"
+                class="count-field"
+                :value="countInBpm"
+                min="20"
+                max="300"
+                aria-label="Count-in tempo"
+                @change="emit('setCountIn', { bpm: fieldValue($event) })"
+              />
+            </label>
+            <label class="count-row">
+              <span>Beats</span>
+              <input
+                type="number"
+                class="count-field"
+                :value="countInBeats"
+                min="1"
+                max="16"
+                aria-label="Count-in beats"
+                @change="emit('setCountIn', { beats: fieldValue($event) })"
+              />
+            </label>
+          </div>
+        </div>
 
         <!-- the mix, small enough to ride the transport row: one glyph per stem, dimming
              with its fader and struck through once it is muted -->
@@ -248,8 +341,13 @@ const pitchHint = computed(() =>
       <div class="group group--centre">
         <button class="btn" aria-label="Back to start" @click="emit('toStart')"><Icon name="start" /></button>
         <button class="btn" aria-label="Back 10 seconds" @click="emit('skip', -SKIP)"><Icon name="back" /></button>
-        <button class="btn btn--play" :aria-label="playing ? 'Pause' : 'Play'" @click="emit('toggle')">
-          <Icon :name="playing ? 'pause' : 'play'" />
+        <button
+          class="btn btn--play"
+          :class="{ 'btn--counting': countingIn }"
+          :aria-label="playing || countingIn ? 'Pause' : 'Play'"
+          @click="emit('toggle')"
+        >
+          <Icon :name="playing || countingIn ? 'pause' : 'play'" />
         </button>
         <button class="btn" aria-label="Forward 10 seconds" @click="emit('skip', SKIP)"><Icon name="forward" /></button>
       </div>
@@ -409,6 +507,42 @@ const pitchHint = computed(() =>
   background: #121212;
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
 }
+
+.loop-name {
+  width: 130px;
+  height: 34px;
+  padding-inline: 10px;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #1d1d1d;
+  color: #e8e8e8;
+  font-size: 13px;
+}
+.loop-name:disabled { opacity: 0.35; }
+
+.popover--count { max-width: 240px; }
+.count-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 13px;
+  color: #cfcfcf;
+}
+.count-field {
+  width: 64px;
+  height: 30px;
+  padding: 2px 6px;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #0d0d0d;
+  color: #eee;
+  text-align: right;
+}
+/* the clicks are running: the button pulses so the count is visible as well as heard */
+.btn--counting { animation: pulse 0.4s ease-in-out infinite alternate; }
+@keyframes pulse { to { opacity: 0.45; } }
 
 .spin {
   width: 13px;

@@ -25,15 +25,27 @@ describe('videoId', () => {
 
 describe('hash round trip', () => {
   it('carries the loop, markers and tempo', () => {
-    const state = { ...emptyState(), loopA: 12.345, loopB: 40, markers: [1.5, 9], tempo: 0.75, pitch: -2 }
+    const state = { ...emptyState(), loopA: 12.345, loopB: 40, markers: [{ at: 1.5 }, { at: 9 }], tempo: 0.75, pitch: -2 }
     const parsed = fromHash(toHash('dQw4w9WgXcQ', state))
 
     expect(parsed?.id).toBe('dQw4w9WgXcQ')
     expect(parsed?.state.loopA).toBeCloseTo(12.35, 2)
     expect(parsed?.state.loopB).toBe(40)
-    expect(parsed?.state.markers).toEqual([1.5, 9])
+    expect(parsed?.state.markers).toEqual([{ at: 1.5 }, { at: 9 }])
     expect(parsed?.state.tempo).toBe(0.75)
     expect(parsed?.state.pitch).toBe(-2)
+  })
+
+  it('carries what a marker and a loop are called, and which markers are skips', () => {
+    const state = {
+      ...emptyState(),
+      markers: [{ at: 4, name: 'Verse, 2nd' }, { at: 8, skip: true }],
+      loops: [{ a: 1, b: 2, name: 'Solo ~ fast' }],
+    }
+    const parsed = fromHash(toHash('dQw4w9WgXcQ', state))
+
+    expect(parsed?.state.markers).toEqual(state.markers)
+    expect(parsed?.state.loops).toEqual(state.loops)
   })
 
   it('leaves defaults out of the link', () => {

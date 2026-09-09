@@ -19,6 +19,10 @@ const PATHS: Record<string, string> = {
   drum: 'M4 9c0-2.2 3.6-4 8-4s8 1.8 8 4-3.6 4-8 4-8-1.8-8-4zM4 9v6c0 2.2 3.6 4 8 4s8-1.8 8-4V9',
   download: 'M12 3v11m0 0l-4-4m4 4l4-4M4 19h16',
   note: 'M9 18V6l11-2v10M9 18a2 2 0 11-4 0 2 2 0 014 0zm11-2a2 2 0 11-4 0 2 2 0 014 0z',
+  plus: 'M12 5v14M5 12h14',
+  trash: 'M4 7h16M10 4h4M6 7l1 13h10l1-13M10 11v6M14 11v6',
+  timer: 'M9 2h6M12 6a8 8 0 100 16 8 8 0 000-16zm0 4v4l3 2',
+  skip: 'M6 6v12l8-6zM16 6h2v12h-2z',
 }
 defineProps<{ name: keyof typeof PATHS | string; stroke?: boolean }>()
 </script>

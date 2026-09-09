@@ -11,7 +11,11 @@ this is the same transport bolted onto YouTube instead of an uploaded track.
 ## What it does
 
 - **A–B repeat** with nudge, halve/double, and snapping to markers
-- **Markers** you can drop, drag, and jump between
+- **Saved loops** — keep the A–B as a named loop, as many per track as you like; the flags
+  above the waveform are the list, and pressing one puts the A–B back on it
+- **Markers** you can drop, drag, name, and jump between — hold one to name it or make it
+  a **skip**, which plays on from the next marker instead of through it
+- **Count-in** — a few clicks at your own tempo before the track comes in
 - **Tempo** 0.25×–4× and **pitch** ±12 semitones, independently
 - **Level trim** with a brick-wall limiter, so quiet backing tracks come up without clipping
 - **Two views** — the video, or the waveform — swapped from the bottom-right corner

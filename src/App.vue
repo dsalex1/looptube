@@ -14,8 +14,9 @@ import { fromFile, fromService, synthetic, type PeaksResult } from '@/helpers/pe
 import { forget, recents, remember, type Recent } from '@/helpers/recents'
 import { followRate, JUMP, RATE_EPSILON, YT_RATE_MAX, YT_RATE_MIN } from '@/helpers/videoSync'
 import { emptyState, fromHash, load as loadState, save as saveState, toHash } from '@/helpers/persist'
+import { countOff } from '@/helpers/countIn'
 import { videoId } from '@/helpers/youtube'
-import type { Capabilities, LoopState, PaneView, Transport } from '@/types'
+import type { Capabilities, CountIn, Loop, LoopState, Marker, PaneView, Transport } from '@/types'
 import { useDebounceFn } from '@vueuse/core'
 import { computed, nextTick, onMounted, ref, watch, type Ref } from 'vue'
 
@@ -28,7 +29,11 @@ const title = ref('')
 const urlInput = ref('')
 const view = ref<PaneView>('video')
 const loopOpen = ref(false)
-const markers = ref<number[]>([])
+const markers = ref<Marker[]>([])
+// The saved selections on this track. The live A-B is separate and is where you are
+// working right now: dragging A about does not rewrite what was saved.
+const loops = ref<Loop[]>([])
+const countIn = ref<CountIn>({})
 const peaks = ref<Uint8Array<ArrayBufferLike>>(new Uint8Array())
 const isSynthetic = ref(true)
 const status = ref('')
@@ -159,7 +164,10 @@ const hasLoop = computed(() => loopA.value != null && loopB.value != null)
 
 const windowStart = computed(() => currentTime.value - span.value / 2)
 const windowEnd = computed(() => currentTime.value + span.value / 2)
-const markerAtPlayhead = computed(() => markers.value.some((m) => Math.abs(m - currentTime.value) <= MARKER_HIT))
+const markerAtPlayhead = computed(() => markers.value.some((m) => Math.abs(m.at - currentTime.value) <= MARKER_HIT))
+
+/** a saved loop is "selected" while the A-B stands on it; nudging either bound steps off it */
+const selectedLoop = computed(() => loops.value.findIndex((l) => l.a === loopA.value && l.b === loopB.value))
 
 // --- loading a video ---------------------------------------------------------------
 
@@ -180,6 +188,8 @@ async function open(nextId: string, state = loadState(nextId)) {
   noteRecent({ id: nextId, title: state.title })
   title.value = state.title ?? ''
   markers.value = [...state.markers]
+  loops.value = [...state.loops]
+  countIn.value = { ...state.countIn }
   engineReady.value = false
   foreignAudio.value = false
   isSynthetic.value = true
@@ -286,34 +296,95 @@ function submit(raw = urlInput.value) {
 // --- markers -----------------------------------------------------------------------
 
 const nearestMarker = (seconds: number) =>
-  markers.value.reduce<number | null>((best, m) => (best == null || Math.abs(m - seconds) < Math.abs(best - seconds) ? m : best), null)
+  markers.value.reduce<number | null>(
+    (best, m) => (best == null || Math.abs(m.at - seconds) < Math.abs(best - seconds) ? m.at : best),
+    null
+  )
 
 function snap(seconds: number) {
   const nearest = nearestMarker(seconds)
   return nearest != null && Math.abs(nearest - seconds) <= SNAP ? nearest : seconds
 }
 
+const sorted = (list: Marker[]) => [...list].sort((a, b) => a.at - b.at)
+/** what is left of a marker once its empty fields are dropped, so a link carries no noise */
+const tidy = (m: Marker): Marker => ({ at: m.at, ...(m.name ? { name: m.name } : {}), ...(m.skip ? { skip: true } : {}) })
+
 function toggleMarker() {
   const at = currentTime.value
   if (!Number.isFinite(at)) return
-  const existing = markers.value.findIndex((m) => Math.abs(m - at) <= MARKER_HIT)
-  markers.value = existing >= 0 ? markers.value.filter((_, i) => i !== existing) : [...markers.value, at].sort((a, b) => a - b)
+  const existing = markers.value.findIndex((m) => Math.abs(m.at - at) <= MARKER_HIT)
+  markers.value = existing >= 0 ? markers.value.filter((_, i) => i !== existing) : sorted([...markers.value, { at }])
 }
 
+/** the name and the kind belong to the marker, so they travel with it */
 function moveMarker(index: number, seconds: number) {
   if (!Number.isFinite(seconds)) return
-  markers.value = markers.value.map((m, i) => (i === index ? seconds : m)).sort((a, b) => a - b)
+  markers.value = sorted(markers.value.map((m, i) => (i === index ? { ...m, at: seconds } : m)))
 }
 
-/** A and B are places you want to get back to as much as any marker, so they are targets too */
+function patchMarker(index: number, patch: Partial<Marker>) {
+  markers.value = markers.value.map((m, i) => (i === index ? tidy({ ...m, ...patch }) : m))
+}
+
+/** Every loop bound is a place you want to get back to as much as any marker. */
 const jumpTargets = computed(() =>
-  [...markers.value, loopA.value, loopB.value].filter((t): t is number => t != null).sort((a, b) => a - b)
+  [...markers.value.map((m) => m.at), ...loops.value.flatMap((l) => [l.a, l.b]), loopA.value, loopB.value]
+    .filter((t): t is number => t != null)
+    .sort((a, b) => a - b)
 )
 
 function jumpMarker(direction: -1 | 1) {
   const candidates = jumpTargets.value.filter((m) => (direction < 0 ? m < currentTime.value - 0.3 : m > currentTime.value))
   const target = direction < 0 ? candidates[candidates.length - 1] : candidates[0]
   active.value.seek(target ?? (direction < 0 ? 0 : duration.value))
+}
+
+// --- skip markers: places to jump from rather than come back to ---------------------
+
+/** where a skip lands: the next marker, or the one after that when it is a skip as well */
+function afterSkip(from: number): number {
+  const next = markers.value.find((m) => m.at > from)
+  if (!next) return duration.value
+  return next.skip ? afterSkip(next.at) : next.at
+}
+
+watch(currentTime, (now, before) => {
+  if (!playing.value || now <= before) return // a wrap or a seek is not playing into one
+  const crossed = markers.value.find((m) => m.skip && m.at >= before && m.at <= now)
+  if (crossed) active.value.seek(afterSkip(crossed.at))
+})
+
+// --- count-in ----------------------------------------------------------------------
+// The clicks are scheduled on their own audio clock and hand over a shade early, by
+// however long the source in charge takes to get sound out, so the track lands on the beat.
+
+const countingIn = ref(false)
+let stopCount: (() => void) | null = null
+
+/**
+ * Pressing play on a skip marker starts where it skips to, rather than starting on the
+ * marker and jumping a frame later: a count-in has to lead into the music it counts in.
+ */
+async function togglePlay() {
+  if (countingIn.value) return stopCount?.()
+  if (playing.value) return active.value.pause()
+
+  const here = markers.value.find((m) => m.skip && m.at >= currentTime.value && m.at <= currentTime.value + MARKER_HIT)
+  if (here) active.value.seek(afterSkip(here.at))
+
+  const beats = countIn.value.enabled ? (countIn.value.beats ?? 4) : 0
+  if (beats > 0) {
+    const lead = useEngine.value ? engine.outputLag() : 0
+    const count = countOff(beats, countIn.value.bpm ?? 120, lead)
+    countingIn.value = true
+    stopCount = count.cancel
+    const reached = await count.done
+    countingIn.value = false
+    stopCount = null
+    if (!reached) return
+  }
+  active.value.play()
 }
 
 // --- A-B repeat --------------------------------------------------------------------
@@ -329,6 +400,44 @@ function setLoop(which: 'a' | 'b', seconds = currentTime.value) {
     t.loopB.value = at
     if (t.loopA.value != null && t.loopA.value >= at) t.loopA.value = null
   }
+}
+
+/** the +: keep the A-B on screen as a loop. It comes back selected, being the one it stands on. */
+function saveLoop() {
+  if (loopA.value == null || loopB.value == null) return
+  loops.value = [...loops.value, { a: loopA.value, b: loopB.value }]
+}
+
+/** picked off the waveform: the A-B jumps to the saved loop, and nothing is written */
+function selectLoop(index: number) {
+  const loop = loops.value[index]
+  if (!loop) return
+  active.value.loopA.value = loop.a
+  active.value.loopB.value = loop.b
+}
+
+/** Dragging a saved loop flag edits that loop; a selected A-B follows the edit. */
+function moveSavedLoop(index: number, which: 'a' | 'b', seconds: number) {
+  const loop = loops.value[index]
+  if (!loop || !Number.isFinite(seconds)) return
+  const at = snap(seconds)
+  if ((which === 'a' && at >= loop.b) || (which === 'b' && at <= loop.a)) return
+  const selected = selectedLoop.value === index
+  loops.value = loops.value.map((saved, i) => (i === index ? { ...saved, [which]: at } : saved))
+  if (selected) active.value[which === 'a' ? 'loopA' : 'loopB'].value = at
+}
+
+/** drop the saved loop the A-B stands on; the A-B itself stays where it is */
+function deleteLoop() {
+  if (selectedLoop.value < 0) return
+  loops.value = loops.value.filter((_, i) => i !== selectedLoop.value)
+}
+
+/** an empty name puts the loop back to being shown by its number */
+function renameLoop(raw: string) {
+  const name = raw.trim()
+  if (selectedLoop.value < 0) return
+  loops.value = loops.value.map((l, i) => (i === selectedLoop.value ? { a: l.a, b: l.b, ...(name ? { name } : {}) } : l))
 }
 
 /** step the whole selection one selection-length forward or back, so you can walk the track */
@@ -406,16 +515,18 @@ watch(currentTime, (at) => {
 
 const currentState = (): LoopState => ({
   markers: markers.value,
+  loops: loops.value,
   loopA: loopA.value,
   loopB: loopB.value,
   tempo: tempo.value,
   pitch: pitch.value,
   gainDb: gainDb.value,
+  countIn: countIn.value,
   title: title.value || undefined,
 })
 
 const persist = useDebounceFn(() => id.value && saveState(id.value, currentState()), 400)
-watch([markers, loopA, loopB, tempo, pitch, gainDb, title], persist, { deep: true })
+watch([markers, loops, loopA, loopB, tempo, pitch, gainDb, countIn, title], persist, { deep: true })
 
 const copied = ref(false)
 async function share() {
@@ -459,7 +570,7 @@ function onKey(e: KeyboardEvent) {
   if (el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA') return
   if (e.code === 'Space') {
     e.preventDefault()
-    active.value.toggle()
+    void togglePlay()
   }
 }
 
@@ -533,6 +644,7 @@ const build = __BUILD__
       :start="windowStart"
       :end="windowEnd"
       :markers="markers"
+      :loops="loops"
       :loopA="loopA"
       :loopB="loopB"
       :loopActive="loopOpen"
@@ -544,6 +656,9 @@ const build = __BUILD__
       @seek="active.seek($event)"
       @moveMarker="moveMarker"
       @moveLoop="setLoop"
+      @moveSavedLoop="moveSavedLoop"
+      @selectLoop="selectLoop"
+      @patchMarker="patchMarker"
       @zoom="zoom"
     />
 
@@ -573,6 +688,10 @@ const build = __BUILD__
       :hasLoop="hasLoop"
       :peaks="peaks"
       :markers="markers"
+      :loops="loops"
+      :selectedLoop="selectedLoop"
+      :countIn="countIn"
+      :countingIn="countingIn"
       :loopA="loopA"
       :loopB="loopB"
       :stemNames="stemNames"
@@ -580,7 +699,7 @@ const build = __BUILD__
       :stemPhase="stemPhase"
       @setStemVolume="engine.setStemVolume"
       @muteStem="engine.toggleStemMute"
-      @toggle="active.toggle()"
+      @toggle="togglePlay"
       @seek="active.seek($event)"
       @toStart="toStart"
       @skip="active.skip($event)"
@@ -590,6 +709,12 @@ const build = __BUILD__
       @stepLoop="stepLoop"
       @scaleLoop="scaleLoop"
       @clearLoop="clearLoop"
+      @saveLoop="saveLoop"
+      @deleteLoop="deleteLoop"
+      @selectLoop="selectLoop"
+      @moveSavedLoop="moveSavedLoop"
+      @renameLoop="renameLoop"
+      @setCountIn="countIn = { ...countIn, ...$event }"
     />
 
     <!-- recents, reachable without giving up whatever is loaded -->
