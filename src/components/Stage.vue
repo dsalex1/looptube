@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import Icon from '@/components/Icon.vue'
 import WaveformCanvas from '@/components/WaveformCanvas.vue'
+import { autoNumbers } from '@/helpers/autoNumber'
 import type { Loop, Marker, PaneView } from '@/types'
 import { onClickOutside } from '@vueuse/core'
 import { computed, ref, watch } from 'vue'
@@ -43,6 +44,9 @@ onClickOutside(markerMenuAnchor, () => (markerMenu.value = null))
 watch(() => props.view, () => (markerMenu.value = null))
 
 const held = computed((): Marker | undefined => (markerMenu.value ? props.markers[markerMenu.value.index] : undefined))
+
+/** what the flag shows while the marker has no name of its own */
+const markerNumbers = computed(() => autoNumbers(props.markers))
 
 const markerName = computed({
   get: () => held.value?.name ?? '',
@@ -93,7 +97,7 @@ const percent = computed(() => `${Math.round((props.progress ?? 0) * 100)}%`)
       />
 
       <div v-if="markerMenu" ref="markerMenuAnchor" class="marker-menu" :style="{ left: `${markerMenu.x}px` }">
-        <input v-model.lazy="markerName" :placeholder="`Marker ${markerMenu.index + 1}`" aria-label="Name this marker" />
+        <input v-model.lazy="markerName" :placeholder="`Marker ${markerNumbers[markerMenu.index] ?? ''}`" aria-label="Name this marker" />
         <button :class="{ on: !held?.skip }" aria-label="Normal marker" @click="setMarkerKind(false)">
           <Icon name="flag" /> Marker
         </button>

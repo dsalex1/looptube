@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { autoNumbers } from '@/helpers/autoNumber'
 import { PEAK_CEILING, PEAK_CEILING_DB, PEAKS_PER_SECOND } from '@/helpers/audioPeaks'
 import type { Loop, Marker } from '@/types'
 import { useElementSize } from '@vueuse/core'
@@ -433,7 +434,8 @@ function draw() {
   ctx.stroke()
 }
 
-const loopLabel = (loop: Loop, index: number) => loop.name || String(index + 1)
+const loopNumbers = computed(() => autoNumbers((props.loops ?? []).map((l) => ({ at: l.a, name: l.name }))))
+const loopLabel = (loop: Loop, index: number) => loop.name || String(loopNumbers.value[index] ?? '')
 
 type LoopPreview = { index: number; which: 'a' | 'b'; at: number }
 type FlagItem = {
@@ -460,7 +462,8 @@ const markerColor = (marker: Marker) =>
   marker.skip ? COLORS.skip : isLoopBoundary(marker.at) ? loopColor.value : COLORS.marker
 
 /** a marker is shown by its name once it has one, and by its number until then */
-const markerLabel = (marker: Marker, index: number) => marker.name || String(index + 1)
+const markerNumbers = computed(() => autoNumbers(props.markers))
+const markerLabel = (marker: Marker, index: number) => marker.name || String(markerNumbers.value[index] ?? '')
 
 /** the flags, and the boxes a press has to land in to have pressed one */
 let markerFlags: { x: number; y: number; width: number; height: number; index: number }[] = []

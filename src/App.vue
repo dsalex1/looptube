@@ -20,7 +20,6 @@ import type { Capabilities, CountIn, Loop, LoopState, Marker, PaneView, Transpor
 import { useDebounceFn } from '@vueuse/core'
 import { computed, nextTick, onMounted, ref, watch, type Ref } from 'vue'
 
-const SNAP = 1 // A/B snaps to a marker this close
 const MARKER_HIT = 0.3 // pressing the marker button this close to one removes it instead
 const DEFAULT_SPAN = 30 // seconds visible in the zoomed view
 
@@ -295,17 +294,6 @@ function submit(raw = urlInput.value) {
 
 // --- markers -----------------------------------------------------------------------
 
-const nearestMarker = (seconds: number) =>
-  markers.value.reduce<number | null>(
-    (best, m) => (best == null || Math.abs(m.at - seconds) < Math.abs(best - seconds) ? m.at : best),
-    null
-  )
-
-function snap(seconds: number) {
-  const nearest = nearestMarker(seconds)
-  return nearest != null && Math.abs(nearest - seconds) <= SNAP ? nearest : seconds
-}
-
 const sorted = (list: Marker[]) => [...list].sort((a, b) => a.at - b.at)
 /** what is left of a marker once its empty fields are dropped, so a link carries no noise */
 const tidy = (m: Marker): Marker => ({ at: m.at, ...(m.name ? { name: m.name } : {}), ...(m.skip ? { skip: true } : {}) })
@@ -391,14 +379,13 @@ async function togglePlay() {
 
 function setLoop(which: 'a' | 'b', seconds = currentTime.value) {
   if (!Number.isFinite(seconds)) return
-  const at = snap(seconds)
   const t = active.value
   if (which === 'a') {
-    t.loopA.value = at
-    if (t.loopB.value != null && t.loopB.value <= at) t.loopB.value = null
+    t.loopA.value = seconds
+    if (t.loopB.value != null && t.loopB.value <= seconds) t.loopB.value = null
   } else {
-    t.loopB.value = at
-    if (t.loopA.value != null && t.loopA.value >= at) t.loopA.value = null
+    t.loopB.value = seconds
+    if (t.loopA.value != null && t.loopA.value >= seconds) t.loopA.value = null
   }
 }
 
@@ -420,11 +407,10 @@ function selectLoop(index: number) {
 function moveSavedLoop(index: number, which: 'a' | 'b', seconds: number) {
   const loop = loops.value[index]
   if (!loop || !Number.isFinite(seconds)) return
-  const at = snap(seconds)
-  if ((which === 'a' && at >= loop.b) || (which === 'b' && at <= loop.a)) return
+  if ((which === 'a' && seconds >= loop.b) || (which === 'b' && seconds <= loop.a)) return
   const selected = selectedLoop.value === index
-  loops.value = loops.value.map((saved, i) => (i === index ? { ...saved, [which]: at } : saved))
-  if (selected) active.value[which === 'a' ? 'loopA' : 'loopB'].value = at
+  loops.value = loops.value.map((saved, i) => (i === index ? { ...saved, [which]: seconds } : saved))
+  if (selected) active.value[which === 'a' ? 'loopA' : 'loopB'].value = seconds
 }
 
 /** drop the saved loop the A-B stands on; the A-B itself stays where it is */

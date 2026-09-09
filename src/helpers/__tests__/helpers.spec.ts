@@ -1,3 +1,4 @@
+import { autoNumbers } from '@/helpers/autoNumber'
 import { computePeaks, PEAK_CEILING } from '@/helpers/audioPeaks'
 import { emptyState, fromHash, toHash } from '@/helpers/persist'
 import { videoId } from '@/helpers/youtube'
@@ -78,5 +79,15 @@ describe('computePeaks', () => {
   it('keeps peaks driven past 0 dBFS apart, up to the ceiling', () => {
     expect(peaksOf(0, 1.1)[0]).toBeGreaterThan(peaksOf(0, 1)[0])
     expect(peaksOf(0, PEAK_CEILING * 2)[0]).toBe(255)
+  })
+})
+
+describe('autoNumbers', () => {
+  it('numbers the unnamed ones through the track, whatever order they were made in', () => {
+    expect(autoNumbers([{ at: 30 }, { at: 10 }, { at: 20 }])).toEqual([3, 1, 2])
+  })
+
+  it('skips the named ones rather than leaving a gap', () => {
+    expect(autoNumbers([{ at: 10 }, { at: 20, name: 'Chorus' }, { at: 30 }])).toEqual([1, undefined, 2])
   })
 })

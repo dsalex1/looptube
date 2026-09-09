@@ -3,6 +3,7 @@ import Icon from '@/components/Icon.vue'
 import JogStrip from '@/components/JogStrip.vue'
 import StemMixer from '@/components/StemMixer.vue'
 import WaveformCanvas from '@/components/WaveformCanvas.vue'
+import { autoNumbers } from '@/helpers/autoNumber'
 import { stemIcon, stemLabel, type StemPhase } from '@/helpers/stems'
 import type { Capabilities, CountIn, Loop, Marker, PaneView } from '@/types'
 import { onBeforeUnmount, onMounted, computed, ref } from 'vue'
@@ -58,6 +59,8 @@ const MAX_PITCH = 12
 const GAIN_LIMIT = 20
 
 const currentLoop = computed((): Loop | undefined => props.loops[props.selectedLoop])
+/** what the flag shows while the loop has no name of its own */
+const loopNumbers = computed(() => autoNumbers(props.loops.map((l) => ({ at: l.a, name: l.name }))))
 const countInOn = computed(() => !!props.countIn.enabled)
 const countInBpm = computed(() => props.countIn.bpm ?? 120)
 const countInBeats = computed(() => props.countIn.beats ?? 4)
@@ -220,7 +223,7 @@ const pitchHint = computed(() =>
           class="loop-name"
           :value="currentLoop?.name ?? ''"
           :disabled="!currentLoop"
-          :placeholder="currentLoop ? `Loop ${selectedLoop + 1}` : 'No loop'"
+          :placeholder="currentLoop ? `Loop ${loopNumbers[selectedLoop] ?? ''}` : 'No loop'"
           aria-label="Name this loop"
           @change="emit('renameLoop', ($event.target as HTMLInputElement).value)"
         />
